@@ -1,112 +1,128 @@
-import os, uuid, tempfile, json
+import os
+import re
+import numpy as np
 import streamlit as st
-from dotenv import load_dotenv
+import fitz
+from supabase import create_client
+from openai import OpenAI
 
-from core.rag import build_vectorstore_from_pdf, get_retriever
-from core.pipeline import run_pipeline
-from core.finance import FinanceInputs, project_cashflows
 
-load_dotenv()
+SUPABASE_URL = "https://lvthchgaspfbuybtrkoe.supabase.co"
+SUPABASE_KEY = "sb_secret_Uft6Yv-x6Wf3j7_T5BjniQ_6Bzj-dUC"
 
-st.set_page_config(page_title="Lease AI (Multi-Agente + RAG)", layout="wide")
+BUCKET_NAME = "contratos"
 
-st.title("📄 Lease AI — Multi-Agente (Legal/Finanzas/Ops/Fiscal) + RAG")
-st.caption("Sube un contrato de arrendamiento (PDF) y conversa con el asistente para análisis auditable.")
+LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
+EMBED_MODEL = "text-embedding-nomic-embed-text-v1.5"
+CHAT_MODEL = "meta-llama-3.1-8b-instruct"
 
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None
-if "last_result" not in st.session_state:
-    st.session_state.last_result = None
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role":"assistant","content":"Sube un PDF y dime qué quieres analizar (p.ej. riesgos, proyección 5 años, redlines, calendario)."}]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+bucket = supabase.storage.from_(BUCKET_NAME)
+
+client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
+
+def pdf_bytes_to_pages(pdf_bytes: bytes, max_pages: int):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages = []
+    for i in range(min(len(doc), max_pages)):
+        t = doc[i].get_text("text").strip()
+        if t:
+            pages.append((i + 1, t))
+    return pages
+
+def clean_text(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+def chunk_text(text: str, chunk_chars: int, overlap: int):
+    text = clean_text(text)
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + chunk_chars)
+        chunks.append(text[start:end])
+        if end == len(text):
+            break
+        start = max(0, end - overlap)
+    return chunks
+
+def embed_texts(texts):
+    resp = client.embeddings.create(model=EMBED_MODEL, input=texts)
+    return np.array([d.embedding for d in resp.data], dtype=np.float32)
+
+def cosine_sim_matrix(a: np.ndarray, b: np.ndarray):
+    a_norm = a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-9)
+    b_norm = b / (np.linalg.norm(b, axis=1, keepdims=True) + 1e-9)
+    return a_norm @ b_norm.T
+
+@st.cache_resource(show_spinner=True)
+def build_index(max_pages: int, chunk_chars: int, overlap: int):
+    files = bucket.list(path="")
+    pdf_files = [f["name"] for f in files if f["name"].lower().endswith(".pdf")]
+    docs = []
+    texts = []
+    for name in pdf_files:
+        pdf_bytes = bucket.download(name)
+        pages = pdf_bytes_to_pages(pdf_bytes, max_pages)
+        for page_num, page_text in pages:
+            for ci, chunk in enumerate(chunk_text(page_text, chunk_chars, overlap)):
+                docs.append({"file": name, "page": page_num, "chunk": ci, "text": chunk})
+                texts.append(chunk)
+    if not texts:
+        return [], np.zeros((0, 1), dtype=np.float32)
+    embs = []
+    for i in range(0, len(texts), 64):
+        embs.append(embed_texts(texts[i:i+64]))
+    return docs, np.vstack(embs)
+
+def retrieve_context(question: str, docs, doc_embs, k: int):
+    q_emb = embed_texts([question])
+    sims = cosine_sim_matrix(doc_embs, q_emb).reshape(-1)
+    top_idx = np.argsort(-sims)[:k]
+    selected = [docs[int(i)] for i in top_idx]
+    context = "\n\n".join(
+        [f"Source: {d['file']} (page {d['page']}, chunk {d['chunk']})\n{d['text']}" for d in selected]
+    )
+    return context, selected
+
+def ask_llm(question: str, context: str):
+    resp = client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=[
+            {"role": "system", "content": "You are a legal assistant. Answer ONLY using the provided context. If missing, say you don't know."},
+            {"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"}
+        ],
+        temperature=0.1,
+    )
+    return resp.choices[0].message.content or ""
+
+st.title("Contratos")
 
 with st.sidebar:
-    st.header("⚙️ Configuración")
-    chroma_dir = os.getenv("CHROMA_DIR", "./chroma_db")
-    st.write(f"Chroma dir: `{chroma_dir}`")
+    max_pages = st.slider("Max pages per PDF", 1, 200, 60)
+    chunk_chars = st.slider("Chunk size", 400, 2000, 1200, step=100)
+    overlap = st.slider("Overlap", 0, 400, 200, step=50)
+    top_k = st.slider("Top-K", 1, 12, 6)
+    if st.button("Rebuild index"):
+        st.cache_resource.clear()
 
-    uploaded = st.file_uploader("Sube contrato (PDF)", type=["pdf"])
-    if uploaded:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
-            f.write(uploaded.read())
-            pdf_path = f.name
+question = st.text_area("Pregunta", height=120)
+ask = st.button("Preguntar")
 
-        collection = f"lease_{st.session_state.session_id}"
-        vs = build_vectorstore_from_pdf(pdf_path, persist_dir=chroma_dir, collection_name=collection)
-        st.session_state.retriever = get_retriever(vs, k=6)
-        st.success("✅ PDF indexado en RAG (Chroma). Ya puedes preguntar.")
+if ask and question.strip():
+    with st.spinner("Procesando..."):
+        docs, doc_embs = build_index(max_pages, chunk_chars, overlap)
+        if not docs:
+            st.error("No PDFs found")
+            st.stop()
+        context, sources = retrieve_context(question, docs, doc_embs, top_k)
+        answer = ask_llm(question, context)
 
-    st.divider()
-    st.subheader("🛍 Retail: escenario de ventas")
-    monthly_sales = st.number_input("Ventas mensuales (MXN) para renta variable", min_value=0.0, value=0.0, step=10000.0)
-    years = st.slider("Horizonte de proyección (años)", 1, 10, 5)
+    st.subheader("Respuesta")
+    st.write(answer)
 
-# Chat UI
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
-
-user_q = st.chat_input("Pregunta (ej. 'haz análisis completo', 'dame redlines', 'proyección 10 años', 'banderas rojas')")
-
-if user_q:
-    st.session_state.messages.append({"role":"user","content":user_q})
-    with st.chat_message("user"):
-        st.markdown(user_q)
-
-    if st.session_state.retriever is None:
-        with st.chat_message("assistant"):
-            st.error("Primero sube un PDF para habilitar RAG.")
-    else:
-        with st.chat_message("assistant"):
-            with st.spinner("Analizando con agentes (Legal/Finanzas/Ops/Fiscal) + RAG..."):
-                result = run_pipeline(st.session_state.retriever, question=user_q)
-
-                # Si retail y el usuario dio ventas, recalcula proyección deterministic:
-                try:
-                    extracted = result.get("extracted", {})
-                    if extracted.get("lease_type") == "retail" and monthly_sales > 0:
-                        fin = FinanceInputs(years=years, monthly_sales=monthly_sales, escalation_rate_annual=0.04)
-                        result["projection"] = project_cashflows(extracted, fin)
-                except Exception:
-                    pass
-
-                st.session_state.last_result = result
-
-                st.markdown("### ✅ Resumen ejecutivo")
-                st.write(result.get("executive_summary","(sin resumen)"))
-
-                st.markdown("### 🧭 Riesgo total")
-                score = result.get("score", {})
-                st.metric("Score (0–100)", score.get("total_score_0_100", 0), score.get("level",""))
-
-        st.session_state.messages.append({"role":"assistant","content":"Listo. Revisa las pestañas (Extracción/Legal/Finanzas/Ops/Fiscal/Calendario). Si quieres, puedo generar redlines o un reporte tipo CFO."})
-
-if st.session_state.last_result:
-    r = st.session_state.last_result
-    tabs = st.tabs(["Extracción JSON", "Legal", "Finanzas", "Operaciones", "Fiscal (MX)", "Calendario", "Riesgo", "Proyección"])
-
-    with tabs[0]:
-        st.json(r.get("extracted", {}))
-
-    with tabs[1]:
-        st.json(r.get("legal", {}))
-
-    with tabs[2]:
-        st.json(r.get("finance", {}))
-
-    with tabs[3]:
-        st.json(r.get("ops", {}))
-
-    with tabs[4]:
-        st.json(r.get("tax", {}))
-
-    with tabs[5]:
-        st.json(r.get("calendar", []))
-
-    with tabs[6]:
-        st.json(r.get("score", {}))
-
-    with tabs[7]:
-        st.json(r.get("projection", {}))
+    with st.expander("Fuentes"):
+        for s in sources:
+            st.markdown(f"*{s['file']}* — page {s['page']} — chunk {s['chunk']}")
+            st.write(s["text"])
+            st.divider()
