@@ -1,9 +1,15 @@
 # agents/router.py
 from agents.legal import run_legal_agent
+<<<<<<< HEAD
 from agents.fiscal import run_fiscal_agent 
 # cuando tengan sus agente, los importan amigos :)
 # from agents.tax_mx import run_tax_agent
 # from agents.finance_agent import run_finance_agent
+=======
+# cuando tengan sus agente, los importan amigos :)
+# from agents.tax_mx import run_tax_agent
+from agents.finance_agent import run_financial_agent
+>>>>>>> f0cf21038238a232d4fce3a84ddf2713a8e44cd6
 # from agents.ops import run_ops_agent
 
 #Este es en lo que ponen sus demás agentes jiji
@@ -15,9 +21,13 @@ def _stub_agent(nombre: str):
 
 # Stubs temporales para que no truene mientras no están listos
 run_tax_agent = _stub_agent("Fiscal")
+<<<<<<< HEAD
 run_finance_agent = _stub_agent("Finanzas")
 run_ops_agent = _stub_agent("Operaciones")
 run_tax_agent = run_fiscal_agent
+=======
+run_ops_agent = _stub_agent("Operaciones")
+>>>>>>> f0cf21038238a232d4fce3a84ddf2713a8e44cd6
 
 
 AGENTS = {
@@ -59,7 +69,11 @@ AGENTS = {
             "- Penalidades económicas\n"
             "- Impacto en flujo de caja y riesgo financiero"
         ),
+<<<<<<< HEAD
         "runner": run_finance_agent,
+=======
+        "runner": run_financial_agent,
+>>>>>>> f0cf21038238a232d4fce3a84ddf2713a8e44cd6
     },
     "operaciones": {
         "label": "Agente Operaciones",
