@@ -2,7 +2,7 @@
 from agents.legal import run_legal_agent
 # cuando tengan sus agente, los importan amigos :)
 # from agents.tax_mx import run_tax_agent
-# from agents.finance_agent import run_finance_agent
+from agents.finance_agent import run_financial_agent
 # from agents.ops import run_ops_agent
 
 #Este es en lo que ponen sus demás agentes jiji
@@ -14,7 +14,6 @@ def _stub_agent(nombre: str):
 
 # Stubs temporales para que no truene mientras no están listos
 run_tax_agent = _stub_agent("Fiscal")
-run_finance_agent = _stub_agent("Finanzas")
 run_ops_agent = _stub_agent("Operaciones")
 
 
@@ -57,7 +56,7 @@ AGENTS = {
             "- Penalidades económicas\n"
             "- Impacto en flujo de caja y riesgo financiero"
         ),
-        "runner": run_finance_agent,
+        "runner": run_financial_agent,
     },
     "operaciones": {
         "label": "Agente Operaciones",
