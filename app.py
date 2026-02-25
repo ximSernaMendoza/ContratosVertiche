@@ -9,7 +9,6 @@ from agents.router import run_orchestrator, list_agents
 
 SUPABASE_URL = "https://lvthchgaspfbuybtrkoe.supabase.co"
 SUPABASE_KEY = "sb_secret_Uft6Yv-x6Wf3j7_T5BjniQ_6Bzj-dUC"
-
 BUCKET_NAME = "contratos"
 
 LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
@@ -94,9 +93,6 @@ def retrieve_context(question: str, docs, doc_embs, k: int):
 
 
 def ask_llm(question: str, context: str):
-    """
-    Modo 'general': un solo asistente legal genérico.
-    """
     resp = client.chat.completions.create(
         model=CHAT_MODEL,
         messages=[
@@ -114,73 +110,139 @@ def ask_llm(question: str, context: str):
     return resp.choices[0].message.content or ""
 
 
-# ------------------ UI ------------------
+def safe_filename(name: str) -> str:
+    name = name.replace("\\", "/").split("/")[-1]
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
+    return name or "upload.bin"
+
+
+def upload_to_bucket(file_bytes: bytes, dest_path: str, content_type: str | None = None):
+    opts = {"content-type": content_type} if content_type else {}
+    return bucket.upload(dest_path, file_bytes, file_options=opts)
+
 
 st.title("Contratos")
 
-with st.sidebar:
-    max_pages = st.slider("Max pages per PDF", 1, 200, 60)
-    chunk_chars = st.slider("Chunk size", 400, 2000, 1200, step=100)
-    overlap = st.slider("Overlap", 0, 400, 200, step=50)
-    top_k = st.slider("Top-K", 1, 12, 6)
-    if st.button("Rebuild index"):
-        st.cache_resource.clear()
+tab_consulta, tab_upload = st.tabs(["Consulta", "Subir documentos"])
 
+with tab_upload:
+    st.subheader("Subir documentos a la base de datos")
+    st.caption(f"Bucket: {BUCKET_NAME}")
 
-agents = list_agents()
-
-
-mode = st.radio(
-    "Modo de consulta",
-    options=["General", "Por agente"],
-    index=0,
-    horizontal=True,
-)
-
-selected_agent_key = None
-
-if mode == "Por agente":
-    # Select de agentes
-    selected_agent_key = st.selectbox(
-        "Selecciona un agente",
-        options=list(agents.keys()),
-        format_func=lambda k: agents[k]["label"],
+    target_folder = st.text_input("Carpeta destino (opcional)", value="")
+    uploaded_files = st.file_uploader(
+        "Selecciona uno o varios archivos (PDF recomendado)",
+        type=None,
+        accept_multiple_files=True,
     )
 
-    
-    if selected_agent_key:
-        st.info(agents[selected_agent_key]["description"])
+    colu1, colu2 = st.columns(2)
+    with colu1:
+        overwrite = st.checkbox("Sobrescribir si ya existe", value=False)
+    with colu2:
+        clear_cache = st.checkbox("Limpiar caché del índice al subir", value=True)
 
-question = st.text_area("Pregunta", height=120)
-ask = st.button("Preguntar")
+    if st.button("Subir al bucket", disabled=not uploaded_files):
+        ok = 0
+        fail = 0
 
-if ask and question.strip():
-    with st.spinner("Procesando..."):
-        docs, doc_embs = build_index(max_pages, chunk_chars, overlap)
-        if not docs:
-            st.error("No PDFs found")
-            st.stop()
-        context, sources = retrieve_context(question, docs, doc_embs, top_k)
+        for uf in uploaded_files:
+            try:
+                fname = safe_filename(uf.name)
+                dest = f"{target_folder.strip().strip('/')}/{fname}".strip("/") if target_folder else fname
 
-        if mode == "General":
-            
-            answer = ask_llm(question, context)
-            results = {"general": answer}
+                if not overwrite:
+                    existing = bucket.list(path=target_folder.strip().strip("/") if target_folder else "")
+                    existing_names = {x["name"] for x in existing}
+                    if fname in existing_names:
+                        st.warning(f"Ya existe y no se sobrescribió: {dest}")
+                        fail += 1
+                        continue
+
+                file_bytes = uf.getvalue()
+                content_type = uf.type or "application/octet-stream"
+                upload_to_bucket(file_bytes, dest, content_type=content_type)
+                st.success(f"Subido: {dest} ({len(file_bytes):,} bytes)")
+                ok += 1
+            except Exception as e:
+                st.error(f"Error subiendo {uf.name}: {e}")
+                fail += 1
+
+        st.info(f"Resultado: {ok} subidos, {fail} con error")
+
+        if clear_cache:
+            st.cache_resource.clear()
+            st.success("Caché limpiada. En la siguiente consulta se reindexará.")
+
+    st.divider()
+    st.subheader("Archivos en el bucket")
+    try:
+        root_files = bucket.list(path="")
+        if root_files:
+            for it in root_files:
+                st.write(f"- {it.get('name')}")
         else:
-            
-            results = run_orchestrator(question, context, agent_key=selected_agent_key)
+            st.write("No hay archivos en la raíz del bucket.")
+    except Exception as e:
+        st.error(f"No pude listar archivos: {e}")
 
-    st.subheader("Respuesta")
+with tab_consulta:
+    with st.sidebar:
+        max_pages = st.slider("Max pages per PDF", 1, 200, 60)
+        chunk_chars = st.slider("Chunk size", 400, 2000, 1200, step=100)
+        overlap = st.slider("Overlap", 0, 400, 200, step=50)
+        top_k = st.slider("Top-K", 1, 12, 6)
+        if st.button("Rebuild index"):
+            st.cache_resource.clear()
 
-    for agent_name, answer in results.items():
-        if agent_name == "general":
-            st.markdown("### Asistente general")
-        else:
-            st.markdown(f"### {agents[agent_name]['label']}")
-        st.write(answer)
+    agents = list_agents()
 
-    with st.expander("Fuentes"):
-        for s in sources:
-            st.markdown(f"*{s['file']}* — page {s['page']} — chunk {s['chunk']}")
-            st.write(s["text"])
-            st.divider()
+    mode = st.radio(
+        "Modo de consulta",
+        options=["General", "Por agente"],
+        index=0,
+        horizontal=True,
+    )
+
+    selected_agent_key = None
+
+    if mode == "Por agente":
+        selected_agent_key = st.selectbox(
+            "Selecciona un agente",
+            options=list(agents.keys()),
+            format_func=lambda k: agents[k]["label"],
+        )
+        if selected_agent_key:
+            st.info(agents[selected_agent_key]["description"])
+
+    question = st.text_area("Pregunta", height=120)
+    ask = st.button("Preguntar")
+
+    if ask and question.strip():
+        with st.spinner("Procesando..."):
+            docs, doc_embs = build_index(max_pages, chunk_chars, overlap)
+            if not docs:
+                st.error("No PDFs found")
+                st.stop()
+            context, sources = retrieve_context(question, docs, doc_embs, top_k)
+
+            if mode == "General":
+                answer = ask_llm(question, context)
+                results = {"general": answer}
+            else:
+                results = run_orchestrator(question, context, agent_key=selected_agent_key)
+
+        st.subheader("Respuesta")
+
+        for agent_name, answer in results.items():
+            if agent_name == "general":
+                st.markdown("### Asistente general")
+            else:
+                st.markdown(f"### {agents[agent_name]['label']}")
+            st.write(answer)
+
+        with st.expander("Fuentes"):
+            for s in sources:
+                st.markdown(f"*{s['file']}* — page {s['page']} — chunk {s['chunk']}")
+                st.write(s["text"])
+                st.divider()
