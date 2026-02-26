@@ -20,7 +20,6 @@ bucket = supabase.storage.from_(BUCKET_NAME)
 
 client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
-# --- Tema rosa elegante ---
 style = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -34,18 +33,15 @@ style = """
     --blanco: #ffffff;
 }
 
-/* Fondo degradado (como te gustaba) */
 [data-testid="stAppViewContainer"]{
     background: linear-gradient(180deg, #d69d96 0%, #966368 100%);
 }
 
-/* Fuente global */
 html, body, [class*="css"]{
     font-family: "Inter", sans-serif !important;
     color: var(--cafe-main);
 }
 
-/* Contenedor principal */
 .main .block-container{
     background-color: rgba(255, 255, 255, 0.92);
     padding: 2rem 2.5rem;
@@ -54,14 +50,12 @@ html, body, [class*="css"]{
     margin-top: 1.5rem;
 }
 
-/* Título */
 h1{
     color: var(--cafe-main) !important;
     font-weight: 800 !important;
     letter-spacing: -0.5px;
 }
 
-/* Sidebar */
 [data-testid="stSidebar"]{
     background-color: var(--rosa-oscuro) !important;
 }
@@ -70,7 +64,6 @@ h1{
     color: var(--beige) !important;
 }
 
-/* Tabs */
 [data-testid="stTabs"] button{
     background-color: rgba(79, 59, 6, 0.08) !important;
     color: var(--cafe-soft) !important;
@@ -85,7 +78,6 @@ h1{
     color: white !important;
 }
 
-/* Botones */
 .stButton > button{
     background-color: var(--cafe-main) !important;
     color: white !important;
@@ -93,15 +85,12 @@ h1{
     padding: 0.55rem 1.4rem;
     font-weight: 600;
     border: none;
-    transition: all 0.2s ease;
 }
 
 .stButton > button:hover{
     background-color: var(--rosa-oscuro) !important;
-    transform: translateY(-1px);
 }
 
-/* Inputs */
 input, textarea, .stTextInput input, .stTextArea textarea{
     background-color: #fff !important;
     border-radius: 12px !important;
@@ -109,14 +98,12 @@ input, textarea, .stTextInput input, .stTextArea textarea{
     color: var(--cafe-main) !important;
 }
 
-/* Selectbox */
 div[data-baseweb="select"] > div{
     background-color: white !important;
     border-radius: 12px !important;
     border: 1.8px solid rgba(150, 99, 104, 0.35) !important;
 }
 
-/* Alerts */
 [data-testid="stAlert"]{
     background-color: var(--beige) !important;
     color: var(--cafe-main) !important;
@@ -124,22 +111,11 @@ div[data-baseweb="select"] > div{
     border: none;
 }
 
-/* Expander */
-[data-testid="stExpander"]{
-    background-color: rgba(255,255,255,0.35);
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,0.25);
-}
-
-
-/* Textos generales (labels, markdown, etc.) */
-
 [data-testid="stMarkdownContainer"] p {
     font-size: 17px !important;
     font-weight: 600 !important;
 }
 
-/* Labels de inputs */
 [data-testid="stTextInput"] label,
 [data-testid="stTextArea"] label,
 [data-testid="stSelectbox"] label {
@@ -148,33 +124,27 @@ div[data-baseweb="select"] > div{
     color: #2b1d0e !important;
 }
 
-/* Checkbox labels */
 [data-testid="stCheckbox"] label {
     font-size: 17px !important;
     font-weight: 600 !important;
     color: #2b1d0e !important;
 }
 
-/* Caja INFO (st.info) */
-
-/* Texto dentro del info */
 [data-testid="stAlert"] p {
     color: #2b1d0e !important;
     font-weight: 600 !important;
     font-size: 16px !important;
 }
 
-/* Bullet pointss dentro del info */
 [data-testid="stAlert"] li {
     color: #2b1d0e !important;
     font-weight: 500 !important;
     font-size: 15.5px !important;
 }
-
 </style>
 """
-
 st.markdown(style, unsafe_allow_html=True)
+
 
 def pdf_bytes_to_pages(pdf_bytes: bytes, max_pages: int):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -225,24 +195,52 @@ def build_index(max_pages: int, chunk_chars: int, overlap: int):
         pages = pdf_bytes_to_pages(pdf_bytes, max_pages)
         for page_num, page_text in pages:
             for ci, chunk in enumerate(chunk_text(page_text, chunk_chars, overlap)):
-                docs.append({"file": name, "page": page_num, "chunk": ci, "text": chunk})
+                docs.append(
+                    {
+                        "file": name,
+                        "page": page_num,
+                        "chunk": ci,
+                        "text": chunk,
+                    }
+                )
                 texts.append(chunk)
     if not texts:
         return [], np.zeros((0, 1), dtype=np.float32)
     embs = []
     for i in range(0, len(texts), 64):
-        embs.append(embed_texts(texts[i:i + 64]))
+        embs.append(embed_texts(texts[i : i + 64]))
     return docs, np.vstack(embs)
 
 
-def retrieve_context(question: str, docs, doc_embs, k: int):
+def retrieve_context(
+    question: str,
+    docs,
+    doc_embs,
+    k: int,
+    target_doc_substr: str | None = None,
+):
+    target_doc_substr = (target_doc_substr or "").strip().lower()
+
+    if target_doc_substr:
+        matched_docs = [d for d in docs if target_doc_substr in d["file"].lower()]
+        if matched_docs:
+            matched_docs_sorted = sorted(
+                matched_docs,
+                key=lambda d: (d["file"], d["page"], d["chunk"]),
+            )
+            context = "\n\n".join(
+                f"Source: {d['file']} (page {d['page']}, chunk {d['chunk']})\n{d['text']}"
+                for d in matched_docs_sorted
+            )
+            return context, matched_docs_sorted
+
     q_emb = embed_texts([question])
     sims = cosine_sim_matrix(doc_embs, q_emb).reshape(-1)
     top_idx = np.argsort(-sims)[:k]
     selected = [docs[int(i)] for i in top_idx]
     context = "\n\n".join(
-        [f"Source: {d['file']} (page {d['page']}, chunk {d['chunk']})\n{d['text']}"
-         for d in selected]
+        f"Source: {d['file']} (page {d['page']}, chunk {d['chunk']})\n{d['text']}"
+        for d in selected
     )
     return context, selected
 
@@ -253,12 +251,15 @@ def ask_llm(question: str, context: str):
         messages=[
             {
                 "role": "system",
-                "content": "You are a legal assistant. Answer ONLY using the provided context. If missing, say you don't know."
+                "content": (
+                    "You are a legal assistant. Answer ONLY using the provided "
+                    "context. If missing, say you don't know."
+                ),
             },
             {
                 "role": "user",
-                "content": f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
-            }
+                "content": f"CONTEXT:\n{context}\n\nQUESTION:\n{question}",
+            },
         ],
         temperature=0.1,
     )
@@ -291,10 +292,10 @@ with tab_upload:
         accept_multiple_files=True,
     )
 
-    colu1, colu2 = st.columns(2)
-    with colu1:
+    c1, c2 = st.columns(2)
+    with c1:
         overwrite = st.checkbox("Sobrescribir si ya existe", value=False)
-    with colu2:
+    with c2:
         clear_cache = st.checkbox("Limpiar caché del índice al subir", value=True)
 
     if st.button("Subir al bucket", disabled=not uploaded_files):
@@ -304,10 +305,18 @@ with tab_upload:
         for uf in uploaded_files:
             try:
                 fname = safe_filename(uf.name)
-                dest = f"{target_folder.strip().strip('/')}/{fname}".strip("/") if target_folder else fname
+                dest = (
+                    f"{target_folder.strip().strip('/')}/{fname}".strip("/")
+                    if target_folder
+                    else fname
+                )
 
                 if not overwrite:
-                    existing = bucket.list(path=target_folder.strip().strip("/") if target_folder else "")
+                    existing = bucket.list(
+                        path=target_folder.strip().strip("/")
+                        if target_folder
+                        else ""
+                    )
                     existing_names = {x["name"] for x in existing}
                     if fname in existing_names:
                         st.warning(f"Ya existe y no se sobrescribió: {dest}")
@@ -341,6 +350,7 @@ with tab_upload:
     except Exception as e:
         st.error(f"No pude listar archivos: {e}")
 
+
 with tab_consulta:
     with st.sidebar:
         max_pages = st.slider("Max pages per PDF", 1, 200, 60)
@@ -359,8 +369,12 @@ with tab_consulta:
         horizontal=True,
     )
 
-    selected_agent_key = None
+    target_doc_substr = st.text_input(
+        "Nombre (o parte) del archivo a analizar",
+        value="",
+    )
 
+    selected_agent_key = None
     if mode == "Por agente":
         selected_agent_key = st.selectbox(
             "Selecciona un agente",
@@ -379,13 +393,24 @@ with tab_consulta:
             if not docs:
                 st.error("No PDFs found")
                 st.stop()
-            context, sources = retrieve_context(question, docs, doc_embs, top_k)
+
+            context, sources = retrieve_context(
+                question,
+                docs,
+                doc_embs,
+                top_k,
+                target_doc_substr=target_doc_substr,
+            )
 
             if mode == "General":
                 answer = ask_llm(question, context)
                 results = {"general": answer}
             else:
-                results = run_orchestrator(question, context, agent_key=selected_agent_key)
+                results = run_orchestrator(
+                    question,
+                    context,
+                    agent_key=selected_agent_key,
+                )
 
         st.subheader("Respuesta")
 
@@ -398,6 +423,8 @@ with tab_consulta:
 
         with st.expander("Fuentes"):
             for s in sources:
-                st.markdown(f"*{s['file']}* — page {s['page']} — chunk {s['chunk']}")
+                st.markdown(
+                    f"*{s['file']}* — página {s['page']} — chunk {s['chunk']}"
+                )
                 st.write(s["text"])
                 st.divider()
