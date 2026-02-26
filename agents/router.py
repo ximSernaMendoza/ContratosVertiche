@@ -1,38 +1,21 @@
 # agents/router.py
-
 from agents.legal import run_legal_agent
+from agents.fiscal import run_fiscal_agent
+# cuando tengan sus agente, los importan amigos :)
+# from agents.tax_mx import run_tax_agent
+from agents.finance_agent import run_financial_agent
+# from agents.ops import run_ops_agent
 
-
+#Este es en lo que ponen sus demás agentes jiji
 def _stub_agent(nombre: str):
-    """
-    Crea un agente de relleno (stub) que solo avisa que ese agente no está implementado.
-    Se usa mientras sus autores terminan sus archivos.
-    """
     def _runner(question: str, context: str) -> str:
         return f"El agente {nombre} todavía no está implementado. Solo está activo el agente Legal."
     return _runner
 
 
-# Intentamos importar los otros agentes; si no existen o fallan, usamos el stub.
-
-# Agente Fiscal
-try:
-    from agents.fiscal import run_fiscal_agent
-except Exception:
-    run_fiscal_agent = _stub_agent("Fiscal")
-
-# Agente Finanzas
-try:
-    from agents.finance_agent import run_financial_agent
-except Exception:
-    run_financial_agent = _stub_agent("Finanzas")
-
-# Agente Operaciones
-try:
-    from agents.ops import run_ops_agent
-except Exception:
-    run_ops_agent = _stub_agent("Operaciones")
-
+# Stubs temporales para que no truene mientras no están listos
+run_ops_agent = _stub_agent("Operaciones")
+run_tax_agent = run_fiscal_agent
 
 AGENTS = {
     "legal": {
@@ -61,7 +44,7 @@ AGENTS = {
             "- Deducibilidad\n"
             "- Tratamiento contable (NIIF 16 / IFRS 16, si aplica)"
         ),
-        "runner": run_fiscal_agent,
+        "runner": run_tax_agent,
     },
     "finanzas": {
         "label": "Agente Finanzas",
