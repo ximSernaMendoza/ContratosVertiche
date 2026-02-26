@@ -20,6 +20,161 @@ bucket = supabase.storage.from_(BUCKET_NAME)
 
 client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
+# --- Tema rosa elegante ---
+style = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
+:root{
+    --rosa-claro: #d69d96;
+    --rosa-oscuro: #966368;
+    --cafe-main: #4f3b06;
+    --cafe-soft: #6a5320;
+    --beige: #d1c18a;
+    --blanco: #ffffff;
+}
+
+/* Fondo degradado (como te gustaba) */
+[data-testid="stAppViewContainer"]{
+    background: linear-gradient(180deg, #d69d96 0%, #966368 100%);
+}
+
+/* Fuente global */
+html, body, [class*="css"]{
+    font-family: "Inter", sans-serif !important;
+    color: var(--cafe-main);
+}
+
+/* Contenedor principal */
+.main .block-container{
+    background-color: rgba(255, 255, 255, 0.92);
+    padding: 2rem 2.5rem;
+    border-radius: 20px;
+    box-shadow: 0 12px 35px rgba(0,0,0,0.15);
+    margin-top: 1.5rem;
+}
+
+/* Título */
+h1{
+    color: var(--cafe-main) !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.5px;
+}
+
+/* Sidebar */
+[data-testid="stSidebar"]{
+    background-color: var(--rosa-oscuro) !important;
+}
+
+[data-testid="stSidebar"] *{
+    color: var(--beige) !important;
+}
+
+/* Tabs */
+[data-testid="stTabs"] button{
+    background-color: rgba(79, 59, 6, 0.08) !important;
+    color: var(--cafe-soft) !important;
+    border-radius: 14px !important;
+    border: none !important;
+    font-weight: 600 !important;
+    padding: 0.4rem 1rem;
+}
+
+[data-testid="stTabs"] button[aria-selected="true"]{
+    background-color: var(--cafe-main) !important;
+    color: white !important;
+}
+
+/* Botones */
+.stButton > button{
+    background-color: var(--cafe-main) !important;
+    color: white !important;
+    border-radius: 14px;
+    padding: 0.55rem 1.4rem;
+    font-weight: 600;
+    border: none;
+    transition: all 0.2s ease;
+}
+
+.stButton > button:hover{
+    background-color: var(--rosa-oscuro) !important;
+    transform: translateY(-1px);
+}
+
+/* Inputs */
+input, textarea, .stTextInput input, .stTextArea textarea{
+    background-color: #fff !important;
+    border-radius: 12px !important;
+    border: 1.8px solid rgba(150, 99, 104, 0.35) !important;
+    color: var(--cafe-main) !important;
+}
+
+/* Selectbox */
+div[data-baseweb="select"] > div{
+    background-color: white !important;
+    border-radius: 12px !important;
+    border: 1.8px solid rgba(150, 99, 104, 0.35) !important;
+}
+
+/* Alerts */
+[data-testid="stAlert"]{
+    background-color: var(--beige) !important;
+    color: var(--cafe-main) !important;
+    border-radius: 14px;
+    border: none;
+}
+
+/* Expander */
+[data-testid="stExpander"]{
+    background-color: rgba(255,255,255,0.35);
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.25);
+}
+
+
+/* Textos generales (labels, markdown, etc.) */
+
+[data-testid="stMarkdownContainer"] p {
+    font-size: 17px !important;
+    font-weight: 600 !important;
+}
+
+/* Labels de inputs */
+[data-testid="stTextInput"] label,
+[data-testid="stTextArea"] label,
+[data-testid="stSelectbox"] label {
+    font-size: 17px !important;
+    font-weight: 600 !important;
+    color: #2b1d0e !important;
+}
+
+/* Checkbox labels */
+[data-testid="stCheckbox"] label {
+    font-size: 17px !important;
+    font-weight: 600 !important;
+    color: #2b1d0e !important;
+}
+
+/* Caja INFO (st.info) */
+
+/* Texto dentro del info */
+[data-testid="stAlert"] p {
+    color: #2b1d0e !important;
+    font-weight: 600 !important;
+    font-size: 16px !important;
+}
+
+/* Bullet pointss dentro del info */
+[data-testid="stAlert"] li {
+    color: #2b1d0e !important;
+    font-weight: 500 !important;
+    font-size: 15.5px !important;
+}
+
+</style>
+"""
+
+st.markdown(style, unsafe_allow_html=True)
 
 def pdf_bytes_to_pages(pdf_bytes: bytes, max_pages: int):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
