@@ -5,6 +5,7 @@ import streamlit as st
 import fitz
 from supabase import create_client
 from openai import OpenAI
+from io import BytesIO
 from agents.router import run_orchestrator, list_agents
 
 SUPABASE_URL = "https://lvthchgaspfbuybtrkoe.supabase.co"
@@ -276,6 +277,16 @@ def upload_to_bucket(file_bytes: bytes, dest_path: str, content_type: str | None
     opts = {"content-type": content_type} if content_type else {}
     return bucket.upload(dest_path, file_bytes, file_options=opts)
 
+@st.cache_data(show_spinner=False)
+def download_pdf_cached(filename: str) -> bytes:
+    return bucket.download(filename)
+
+def render_pdf_page_to_png(pdf_bytes: bytes, page_num_1based: int, dpi: int = 150) -> bytes:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    i = max(1, page_num_1based) - 1
+    i = min(i, len(doc) - 1)
+    pix = doc[i].get_pixmap(dpi=dpi)
+    return pix.tobytes("png")
 
 st.title("Contratos")
 
@@ -422,9 +433,49 @@ with tab_consulta:
             st.write(answer)
 
         with st.expander("Fuentes"):
-            for s in sources:
-                st.markdown(
-                    f"*{s['file']}* — página {s['page']} — chunk {s['chunk']}"
-                )
+            if not sources:
+                st.write("No hay fuentes.")
+            else:
+                labels = [
+                    f"{i+1}) {s['file']} — página {s['page']} — chunk {s['chunk']}"
+                    for i, s in enumerate(sources)
+                ]
+                idx = st.selectbox("Ver fuente", range(len(labels)), format_func=lambda i: labels[i])
+
+                s = sources[idx]
+                st.markdown(f"**Archivo:** {s['file']}")
+                st.markdown(f"**Página:** {s['page']}  |  **Chunk:** {s['chunk']}")
                 st.write(s["text"])
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    dpi = st.slider("Calidad (DPI)", 80, 250, 150, step=10, key="dpi_viewer")
+                with c2:
+                    show_download = st.checkbox("Mostrar botón de descarga", value=True, key="dl_viewer")
+
+                try:
+                    pdf_bytes = download_pdf_cached(s["file"])
+                    png_bytes = render_pdf_page_to_png(pdf_bytes, s["page"], dpi=dpi)
+
+                    st.image(
+                        png_bytes,
+                        caption=f"{s['file']} — página {s['page']}",
+                        use_container_width=True,
+                    )
+
+                    if show_download:
+                        st.download_button(
+                            "Descargar PDF",
+                            data=pdf_bytes,
+                            file_name=s["file"],
+                            mime="application/pdf",
+                        )
+
+                except Exception as e:
+                    st.error(f"No pude renderizar la página: {e}")
+
                 st.divider()
+
+                st.markdown("#### Todas las fuentes (lista)")
+                for s2 in sources:
+                    st.markdown(f"*{s2['file']}* — página {s2['page']} — chunk {s2['chunk']}")
