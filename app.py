@@ -6,9 +6,6 @@ import fitz
 from supabase import create_client
 from openai import OpenAI
 from agents.router import run_orchestrator, list_agents
-from agents.finance_agent import extract_finance_numbers
-from core.finance import FinanceInputs, project_cashflows
-import streamlit as st
 from datetime import datetime, date
 import pandas as pd
 import plotly.express as px
@@ -16,7 +13,7 @@ import requests
 from dateutil.relativedelta import relativedelta
 from streamlit_calendar import calendar
 from typing import Optional
-
+import plotly.graph_objects as go
 
 # ---------------------------
 # CONFIG
@@ -155,7 +152,7 @@ st.markdown(
         margin-top: 0rem;
       }}
       .kpi {{
-        flex: 1 1 180px;
+        flex: 1 1 150px;
         border-radius: 14px;
         padding: 0.4rem 1rem;
         background: rgba(255,255,255,0.60);
@@ -222,18 +219,23 @@ st.markdown(
         display:flex;
         gap:.5rem;
         flex-wrap: wrap;
-        margin: .75rem 0 0 0;
+        margin: .75rem 0 1rem 0;
       }}
-      .chip {{
-        padding: .45rem .7rem;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.55);
-        border: 1px solid rgba(79,59,6,0.14);
-        color: var(--brown-main);
-        font-weight: 600;
-        font-size: .85rem;
-        cursor: default;
-      }}
+      /* Chips como botones */
+    .chip-btn button {{
+    padding: .45rem .7rem !important;
+    border-radius: 999px !important;
+    background: rgba(255,255,255,0.55) !important;
+    border: 1px solid rgba(79,59,6,0.14) !important;
+    color: var(--brown-main) !important;
+    font-weight: 700 !important;
+    font-size: .85rem !important;
+    box-shadow: none !important;
+    }}
+    .chip-btn button:hover {{
+    filter: brightness(0.98);
+    transform: translateY(-1px);
+    }}
 
       /* ---- Bottom input bar (fija) ---- */
       .bottom-bar {{
@@ -310,6 +312,7 @@ st.markdown(
         font-size: .82rem;
         color: rgba(79,59,6,0.60);
       }}
+      
 
       /* Quitar apariencia de botón */
 section[data-testid="stSidebar"] .stButton button {{
@@ -322,6 +325,7 @@ section[data-testid="stSidebar"] .stButton button {{
     text-align: left !important;
 }}
 
+
 /* Hover tipo link */
 section[data-testid="stSidebar"] .stButton button:hover {{
     color: #966368 !important;
@@ -332,6 +336,31 @@ section[data-testid="stSidebar"] .stButton button:hover {{
 section[data-testid="stSidebar"] .stButton {{
     margin-bottom: 0.6rem;
 }}
+
+/* ----------------------------
+   Drag & Drop - File Uploader
+---------------------------- */
+
+[data-testid="stFileUploader"] {{
+  border: 2px dashed #966368 !important;
+  border-radius: 16px !important;
+  padding: 1.2rem !important;
+}}
+[data-testid="stFileUploader"], 
+[data-testid="stFileUploader"] * {{
+  color: white !important;
+}}
+[data-testid="stFileUploader"] > div,
+[data-testid="stFileUploader"] section {{
+  background-color: rgba(150,99,104,0.35) !important;
+}}
+[data-testid="stFileUploader"] button {{
+  background: linear-gradient(135deg, #966368, #d69d96) !important;
+  color: white !important;
+  border-radius: 12px !important;
+  border: none !important;
+}}
+
 
     </style>
     """,
@@ -454,13 +483,14 @@ if "section" not in st.session_state:
     st.session_state["section"] = "consulta"
 
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []  
 
 if "input_counter" not in st.session_state:
     st.session_state.input_counter = 0
 
 # ---------------------------
-#
+# SUPABASE + LLM
+# ---------------------------
 
 SUPABASE_URL = "https://lvthchgaspfbuybtrkoe.supabase.co"
 SUPABASE_KEY = "sb_secret_Uft6Yv-x6Wf3j7_T5BjniQ_6Bzj-dUC"
@@ -479,7 +509,9 @@ else:
 
 client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
-
+# ---------------------------
+# Helpers RAG
+# --------------------------- 
 def pdf_bytes_to_pages(pdf_bytes: bytes, max_pages: int):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = []
@@ -489,10 +521,8 @@ def pdf_bytes_to_pages(pdf_bytes: bytes, max_pages: int):
             pages.append((i + 1, t))
     return pages
 
-
 def clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
-
 
 def chunk_text(text: str, chunk_chars: int, overlap: int):
     text = clean_text(text)
@@ -506,17 +536,14 @@ def chunk_text(text: str, chunk_chars: int, overlap: int):
         start = max(0, end - overlap)
     return chunks
 
-
 def embed_texts(texts):
     resp = client.embeddings.create(model=EMBED_MODEL, input=texts)
     return np.array([d.embedding for d in resp.data], dtype=np.float32)
-
 
 def cosine_sim_matrix(a: np.ndarray, b: np.ndarray):
     a_norm = a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-9)
     b_norm = b / (np.linalg.norm(b, axis=1, keepdims=True) + 1e-9)
     return a_norm @ b_norm.T
-
 
 @st.cache_resource(show_spinner=True)
 def build_index(max_pages: int, chunk_chars: int, overlap: int):
@@ -525,8 +552,8 @@ def build_index(max_pages: int, chunk_chars: int, overlap: int):
 
     files = bucket.list(path="")
     pdf_files = [f["name"] for f in files if f.get("name", "").lower().endswith(".pdf")]
-    docs = []
-    texts = []
+    
+    docs, texts = [], []
     for name in pdf_files:
         pdf_bytes = bucket.download(name)
         pages = pdf_bytes_to_pages(pdf_bytes, max_pages)
@@ -572,12 +599,10 @@ def ask_llm(question: str, context: str):
     )
     return resp.choices[0].message.content or ""
 
-
 def safe_filename(name: str) -> str:
     name = name.replace("\\", "/").split("/")[-1]
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
     return name or "upload.bin"
-
 
 def upload_to_bucket(file_bytes: bytes, dest_path: str, content_type: Optional[str] = None):
     if bucket is None:
@@ -681,7 +706,7 @@ with st.sidebar:
 active_alerts = len(alerts)
 icon = "🟢" if active_alerts == 0 else "🔴"
 
-left, right = st.columns([1.7, 1], vertical_alignment="top")
+left, right = st.columns([1.7, 0.9], vertical_alignment="top")
 with left:
     st.markdown(
         """
@@ -785,6 +810,28 @@ if section == "consulta":
             st.info(agents[selected_agent_key]["description"])
 
     # ---------------------------
+    # Botones Prompt preestablecidos
+    # ---------------------------
+    chip_prompts = {
+    "📌 Resumen ejecutivo": "Dame un resumen ejecutivo del contrato. Incluye puntos clave, riesgos y próximos pasos.",
+    "⚠️ Riesgos operativos": "Identifica riesgos operativos del contrato: mantenimiento, servicios, seguros, penalizaciones y restricciones.",
+    "💰 Simulación de pagos": "Simula el flujo de pagos: renta, incrementos, indexaciones y fechas relevantes. Indica supuestos si faltan datos.",
+    "✅ Checklist de obligaciones": "Genera un checklist de obligaciones del arrendatario y arrendador con evidencia (cláusulas) si aplica."
+}
+
+    st.markdown('<div class="chips">', unsafe_allow_html=True)
+
+    c1, c2, c3, c4 = st.columns(4)
+    cols = [c1, c2, c3, c4]
+
+    for (label, prompt), col in zip(chip_prompts.items(), cols):
+        with col:
+            if st.button(label, key=f"chip_{label}"):
+                st.session_state["question_input"] = prompt  # llena el input
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---------------------------
     # Input + Enviar (sin label vacío)
     # ---------------------------
     question = st.text_input(
@@ -812,12 +859,11 @@ if section == "consulta":
 
             context, sources = retrieve_context(q, docs, doc_embs, top_k)
 
-            chart_data = None
-
             if mode == "General":
                 final_answer = ask_llm(q, context)
             else:
                 results = run_orchestrator(q, context, agent_key=selected_agent_key)
+                # Unir respuestas en un solo texto para el chat
                 final_answer = "\n\n".join([f"{k}: {v}" for k, v in results.items()])
 
                 if selected_agent_key == "finanzas":
@@ -838,41 +884,12 @@ if section == "consulta":
                     chart_data["numbers"] = numbers
 
         # Guardar respuesta del bot
-        st.session_state.messages.append({"role": "bot", "text": final_answer, "chart_data": chart_data, "sources": sources})
-
+        st.session_state.messages.append({"role": "bot", "text": final_answer, "chart_data": chart_data})
         # Limpiar input cambiando el key del widget
         st.session_state.input_counter += 1
         st.rerun()
 
-    # ---------------------------
-    # Chips (solo UI)
-    # ---------------------------
-    st.markdown(
-        """
-        <div class="chips">
-          <div class="chip">📌 Resumen ejecutivo</div>
-          <div class="chip">⚠️ Riesgos operativos</div>
-          <div class="chip">💰 Simulación de pagos</div>
-          <div class="chip">✅ Checklist de obligaciones</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    # ---------------------------
-    # (Opcional) Bottom bar (solo UI visual)
-    # OJO: si la usas, NO pongas inputs duplicados aquí
-    # ---------------------------
-    st.markdown(
-        """
-        <div class="bottom-bar">
-          <div class="bottom-inner">
-            <div class="hint">Escribe tu pregunta arriba y presiona Enviar</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 elif section == "subir":
     st.subheader("Subir documentos a la base de datos")
@@ -925,13 +942,17 @@ elif section == "subir":
 
     st.divider()
     st.subheader("Archivos en el bucket")
+
     try:
         root_files = bucket.list(path="")
-        if root_files:
-            for it in root_files:
-                st.write(f"- {it.get('name')}")
+        names = [it.get("name") for it in (root_files or []) if it.get("name")]
+
+        if names:
+            with st.expander(f"📂 Contratos ({len(names)})", expanded=False):
+                st.markdown("\n".join([f"- {n}" for n in sorted(names)]))
         else:
             st.write("No hay archivos en la raíz del bucket.")
+
     except Exception as e:
         st.error(f"No pude listar archivos: {e}")
 
@@ -989,15 +1010,37 @@ elif section == "calendario":
         st.caption("No hay contratos en ventana de alerta.")
     else:
         for a in alerts:
-            st.warning(f"**{a['title']}** · vence **{a['expiry']}** · faltan **{a['days_left']}** días")
+            days = a["days_left"]
+
+            if days < 30:
+                bg = "rgba(255,80,80,0.15)"
+                border = "#ff4d4d"
+            elif days < 60:
+                bg = "rgba(255,165,0,0.18)"
+                border = "#ff9900"
+            else:
+                bg = "rgba(214,157,150,0.25)"
+                border = "#966368"
+
+            st.markdown(
+                f"""
+                <div style="
+                    background: {bg};
+                    border-left: 6px solid {border};
+                    padding: 0.8rem;
+                    border-radius: 10px;
+                    color: #white !important;
+                    font-weight: 600;
+                    margin-bottom: 0.5rem;
+                ">
+                ⚠️ <b>{a['title']}</b> · vence <b>{a['expiry']}</b> · faltan <b>{a['days_left']}</b> días
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 elif section == "dashboard":
     st.markdown("### Dashboard ")
-
-    import pandas as pd
-    import plotly.express as px
-    import plotly.graph_objects as go
-    import requests
 
     # ----------------------------
     # Datos (demo) — reemplaza por tu dataset
@@ -1040,21 +1083,6 @@ elif section == "dashboard":
     mex_geo = load_mexico_geojson()
 
     # ----------------------------
-    # Escala de color — ELIGE UNA
-    # ----------------------------
-    # Opción A: escala de Plotly bonita y moderna
-    color_scale = "Sunset"     # otras buenas: "Reds", "Peach", "Aggrnyl", "Viridis"
-
-    # Opción B: escala personalizada con tu paleta (beige -> rosa -> rosa oscuro)
-    custom_scale = [
-        [0.0, "#d1c18a"],  # beige
-        [0.5, "#d69d96"],  # rosa claro
-        [1.0, "#966368"],  # rosa oscuro
-    ]
-    # Si quieres la personalizada, descomenta esta línea:
-    # color_scale = custom_scale
-
-    # ----------------------------
     # Mapa limpio
     # ----------------------------
     fig = px.choropleth(
@@ -1065,14 +1093,7 @@ elif section == "dashboard":
         color="count",
         hover_name="state",
         hover_data={"count": True, "state": False},
-        color_continuous_scale=color_scale,
-    )
-
-    # Tooltip limpio (menos “basura”)
-    fig.update_traces(
-        hovertemplate="<b>%{hovertext}</b><br>Conteo: %{z}<extra></extra>",
-        marker_line_width=0.6,
-        marker_line_color="rgba(255,255,255,0.65)"  # borde sutil
+        color_continuous_scale="Sunset",
     )
 
     # Layout minimalista (sin márgenes, fondo transparente)
@@ -1131,3 +1152,7 @@ elif section == "dashboard":
 
     #with st.expander("Ver tabla completa"):
     #    st.dataframe(df.sort_values("count", ascending=False), use_container_width=True)
+
+# Footer
+st.markdown('<div class="footer">© Vertiche  · Tecnológico de Monterrey CEM  </div>', unsafe_allow_html=True)
+st.markdown('<div class="footer"> · Ximena Serna Mendoza · Tamara Alejandra Ortiz Villareal · Nathan Isaac García Larios · Mauricio Aguilar Pacheco · </div>', unsafe_allow_html=True)
