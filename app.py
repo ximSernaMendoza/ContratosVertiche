@@ -338,6 +338,44 @@ section[data-testid="stSidebar"] .stButton {{
     unsafe_allow_html=True,
 )
 # ---------------------------
+# FUENTES / PDF VIEWER
+# ---------------------------
+@st.cache_data(ttl=3500)
+def get_signed_url(filename: str) -> str:
+    try:
+        resp = supabase.storage.from_(BUCKET_NAME).create_signed_url(filename, 3600)
+        return resp.get("signedURL") or resp.get("signedUrl") or ""
+    except Exception:
+        return ""
+
+
+def _render_sources(sources: list):
+    if not sources:
+        return
+
+    # Agrupar chunks por archivo → páginas únicas
+    files: dict = {}
+    for s in sources:
+        fname = s["file"]
+        if fname not in files:
+            files[fname] = set()
+        files[fname].add(s["page"])
+
+    with st.expander(f"📄 Fuentes consultadas ({len(files)} archivo(s))"):
+        for fname, pages in files.items():
+            pages_str = ", ".join(f"p.{p}" for p in sorted(pages))
+            col_name, col_btn = st.columns([3, 1])
+            with col_name:
+                st.markdown(f"**{fname}**  \n`{pages_str}`")
+            with col_btn:
+                url = get_signed_url(fname)
+                if url:
+                    st.link_button("Ver PDF", url)
+                else:
+                    st.caption("Sin enlace")
+
+
+# ---------------------------
 # GRÁFICA FINANCIERA
 # ---------------------------
 def _render_finance_chart(chart_data: dict):
@@ -716,6 +754,8 @@ if section == "consulta":
             )
             if m.get("chart_data"):
                 _render_finance_chart(m["chart_data"])
+            if m.get("sources"):
+                _render_sources(m["sources"])
 
     # ---------------------------
     # Parámetros de consulta (fijos)
@@ -798,7 +838,7 @@ if section == "consulta":
                     chart_data["numbers"] = numbers
 
         # Guardar respuesta del bot
-        st.session_state.messages.append({"role": "bot", "text": final_answer, "chart_data": chart_data})
+        st.session_state.messages.append({"role": "bot", "text": final_answer, "chart_data": chart_data, "sources": sources})
 
         # Limpiar input cambiando el key del widget
         st.session_state.input_counter += 1
