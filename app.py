@@ -6,6 +6,8 @@ import fitz
 from supabase import create_client
 from openai import OpenAI
 from agents.router import run_orchestrator, list_agents
+from agents.finance_agent import extract_finance_numbers
+from core.finance import FinanceInputs, project_cashflows
 import streamlit as st
 from datetime import datetime, date
 import pandas as pd
@@ -336,13 +338,88 @@ section[data-testid="stSidebar"] .stButton {{
     unsafe_allow_html=True,
 )
 # ---------------------------
+# GRÁFICA FINANCIERA
+# ---------------------------
+def _render_finance_chart(chart_data: dict):
+    rows = chart_data.get("table_rows", [])
+    numbers = chart_data.get("numbers", {})
+    if not rows:
+        st.caption("⚠️ No se pudo generar proyección: el contrato no especifica renta mensual.")
+        return
+
+    currency = numbers.get("currency") or "MXN"
+    total = chart_data.get("total_contract_value", 0)
+    max_exp = chart_data.get("max_exposure", 0)
+    years = chart_data.get("assumptions", {}).get("years", "?")
+    escalation = chart_data.get("assumptions", {}).get("escalation_rate_annual", 0)
+
+    # KPIs
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Valor total contrato", f"${total:,.0f} {currency}")
+    k2.metric("Renta máxima mensual", f"${max_exp:,.0f} {currency}")
+    k3.metric("Horizonte proyectado", f"{years} año(s)")
+    k4.metric("Escalación anual", f"{escalation * 100:.1f}%")
+
+    df_proj = pd.DataFrame(rows)
+
+    # Líneas: renta base, variable y total
+    has_variable = df_proj["variable_rent"].sum() > 0
+    y_cols = ["base_rent", "total"] if not has_variable else ["base_rent", "variable_rent", "total"]
+    color_map = {
+        "base_rent":     "#966368",
+        "variable_rent": "#d1c18a",
+        "total":         "#4f3b06",
+    }
+    name_map = {
+        "base_rent":     "Renta base",
+        "variable_rent": "Renta variable",
+        "total":         "Total",
+    }
+
+    fig = px.line(
+        df_proj,
+        x="month",
+        y=y_cols,
+        labels={"month": "Mes", "value": f"Monto ({currency})", "variable": ""},
+        title="Proyección de flujos del contrato",
+        color_discrete_map=color_map,
+    )
+    fig.for_each_trace(lambda t: t.update(name=name_map.get(t.name, t.name)))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(255,255,255,0.6)",
+        height=320,
+        margin=dict(l=0, r=0, t=40, b=0),
+        legend=dict(orientation="h", y=-0.25),
+        xaxis=dict(title="Mes", showgrid=False),
+        yaxis=dict(title=f"Monto ({currency})", tickformat="$,.0f"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("Ver tabla de proyección"):
+        st.dataframe(
+            df_proj.rename(columns={
+                "month": "Mes",
+                "base_rent": f"Renta base ({currency})",
+                "variable_rent": f"Renta variable ({currency})",
+                "total": f"Total ({currency})",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+# ---------------------------
 # SESSION STATE (FIX)
 # ---------------------------
 if "section" not in st.session_state:
     st.session_state["section"] = "consulta"
 
 if "messages" not in st.session_state:
-    st.session_state.messages = []  
+    st.session_state.messages = []
+
+if "input_counter" not in st.session_state:
+    st.session_state.input_counter = 0
 
 # ---------------------------
 #
@@ -637,6 +714,8 @@ if section == "consulta":
                 """,
                 unsafe_allow_html=True,
             )
+            if m.get("chart_data"):
+                _render_finance_chart(m["chart_data"])
 
     # ---------------------------
     # Parámetros de consulta (fijos)
@@ -672,7 +751,7 @@ if section == "consulta":
         "Pregunta",
         placeholder="Pregunta lo que quieras...",
         label_visibility="collapsed",
-        key="question_input",
+        key=f"question_input_{st.session_state.input_counter}",
     )
     ask = st.button("Enviar", use_container_width=False)
 
@@ -693,18 +772,37 @@ if section == "consulta":
 
             context, sources = retrieve_context(q, docs, doc_embs, top_k)
 
+            chart_data = None
+
             if mode == "General":
                 final_answer = ask_llm(q, context)
             else:
                 results = run_orchestrator(q, context, agent_key=selected_agent_key)
-                # Unir respuestas en un solo texto para el chat
                 final_answer = "\n\n".join([f"{k}: {v}" for k, v in results.items()])
 
-        # Guardar respuesta del bot
-        st.session_state.messages.append({"role": "bot", "text": final_answer})
+                if selected_agent_key == "finanzas":
+                    numbers = extract_finance_numbers(context)
+                    extracted = {
+                        "lease_type": "retail" if numbers.get("variable_pct") else "comercial",
+                        "rent": {
+                            "base_monthly": numbers.get("base_monthly"),
+                            "variable_pct_over_sales": numbers.get("variable_pct"),
+                            "breakpoint_sales": numbers.get("breakpoint_sales"),
+                        },
+                    }
+                    fin = FinanceInputs(
+                        years=int(numbers.get("lease_years") or 3),
+                        escalation_rate_annual=(numbers.get("escalation_pct") or 4.0) / 100.0,
+                    )
+                    chart_data = project_cashflows(extracted, fin)
+                    chart_data["numbers"] = numbers
 
-        # (Opcional) limpiar input
-        st.session_state["question_input"] = ""
+        # Guardar respuesta del bot
+        st.session_state.messages.append({"role": "bot", "text": final_answer, "chart_data": chart_data})
+
+        # Limpiar input cambiando el key del widget
+        st.session_state.input_counter += 1
+        st.rerun()
 
     # ---------------------------
     # Chips (solo UI)
