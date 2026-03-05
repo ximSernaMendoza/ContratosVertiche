@@ -622,6 +622,80 @@ else:
 
 client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
+def list_all_pdfs_in_bucket(prefix: str = "") -> list[str]:
+    """
+    Lista TODOS los PDFs del bucket (incluyendo subcarpetas).
+    Regresa paths tipo: 'Colima/C02_Contrato_Colima-02.pdf'
+    """
+    if bucket is None:
+        return []
+
+    pdfs = []
+    stack = [prefix.strip("/")] if prefix else [""]
+
+    while stack:
+        cur = stack.pop()
+        items = bucket.list(path=cur)
+
+        for it in items or []:
+            name = it.get("name", "")
+            if not name:
+                continue
+
+            # Supabase Storage list() regresa nombres relativos al path consultado
+            full = f"{cur}/{name}".strip("/") if cur else name
+
+            # Si es carpeta, la exploramos (en Supabase suele venir sin ".pdf")
+            if not name.lower().endswith(".pdf"):
+                # heurística simple: si no trae extensión, lo tratamos como folder
+                # (si en tu bucket hay archivos sin extensión, dímelo y ajustamos)
+                stack.append(full)
+                continue
+
+            pdfs.append(full)
+
+    # quita duplicados y ordena
+    return sorted(set(pdfs))
+
+def find_codigo_civil_pdf(all_pdfs: list[str]) -> Optional[str]:
+    """
+    Busca automáticamente el PDF del Código Civil.
+    Ajusta las palabras clave según cómo lo tengas guardado.
+    """
+    preferred_patterns = [
+        "codigo civil",
+        "código civil",
+        "codigo_civil",
+        "codigocivil",
+    ]
+
+    normalized = []
+    for p in all_pdfs:
+        base = os.path.basename(p).lower()
+        normalized.append((p, base))
+
+    # 1) match preferente por nombre
+    for full_path, base in normalized:
+        if any(pat in base for pat in preferred_patterns):
+            return full_path
+
+    # 2) fallback: buscar en el path completo
+    for p in all_pdfs:
+        low = p.lower()
+        if any(pat in low for pat in preferred_patterns):
+            return p
+
+    return None
+
+
+def unique_preserve_order(items: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for x in items:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
 # ---------------------------
 # Helpers RAG
 # --------------------------- 
@@ -648,6 +722,36 @@ def chunk_text(text: str, chunk_chars: int, overlap: int):
             break
         start = max(0, end - overlap)
     return chunks
+def _norm(s: str) -> str:
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+def infer_files_from_question(question: str, all_pdfs: list[str]) -> list[str]:
+    qn = _norm(question)
+    if not qn:
+        return []
+
+    scored = []
+    for p in all_pdfs:
+        base = _norm(os.path.basename(p).replace(".pdf", ""))
+        tokens = [t for t in base.split() if len(t) >= 3]
+
+        score = 0
+        for t in tokens:
+            if t in qn:
+                score += 1
+
+        # bonus si menciona algo tipo C02 / C01
+        if re.search(r"\bc\d{1,3}\b", qn) and re.search(r"\bc\d{1,3}\b", base):
+            if re.search(r"\bc\d{1,3}\b", qn).group(0) in base:
+                score += 3
+
+        if score > 0:
+            scored.append((score, p))
+
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return [p for _, p in scored[:3]]
 
 def embed_texts(texts):
     resp = client.embeddings.create(model=EMBED_MODEL, input=texts)
@@ -659,20 +763,25 @@ def cosine_sim_matrix(a: np.ndarray, b: np.ndarray):
     return a_norm @ b_norm.T
 
 @st.cache_resource(show_spinner=True)
-def build_index(max_pages: int, chunk_chars: int, overlap: int):
+def build_index(max_pages: int, chunk_chars: int, overlap: int, files_to_index: Optional[tuple[str, ...]] = None):
     if bucket is None:
         return [], np.zeros((0, 1), dtype=np.float32)
 
-    files = bucket.list(path="")
-    pdf_files = [f["name"] for f in files if f.get("name", "").lower().endswith(".pdf")]
-    
+    all_files = list_all_pdfs_in_bucket()
+    pdf_files = list(files_to_index) if files_to_index else all_files
+
     docs, texts = [], []
-    for name in pdf_files:
-        pdf_bytes = bucket.download(name)
+
+    for path in pdf_files:
+        try:
+            pdf_bytes = bucket.download(path)
+        except Exception:
+            continue
+
         pages = pdf_bytes_to_pages(pdf_bytes, max_pages)
         for page_num, page_text in pages:
             for ci, chunk in enumerate(chunk_text(page_text, chunk_chars, overlap)):
-                docs.append({"file": name, "page": page_num, "chunk": ci, "text": chunk})
+                docs.append({"file": path, "page": page_num, "chunk": ci, "text": chunk})
                 texts.append(chunk)
 
     if not texts:
@@ -681,18 +790,111 @@ def build_index(max_pages: int, chunk_chars: int, overlap: int):
     embs = []
     for i in range(0, len(texts), 64):
         embs.append(embed_texts(texts[i:i + 64]))
+
     return docs, np.vstack(embs)
 
-def retrieve_context(question: str, docs, doc_embs, k: int):
+def retrieve_context(
+    question: str,
+    docs,
+    doc_embs,
+    k: int,
+    allowed_files: Optional[set[str]] = None
+):
     q_emb = embed_texts([question])
     sims = cosine_sim_matrix(doc_embs, q_emb).reshape(-1)
-    top_idx = np.argsort(-sims)[:k]
+
+    idx = np.arange(len(docs))
+    if allowed_files:
+        mask = np.array([d["file"] in allowed_files for d in docs], dtype=bool)
+        idx = idx[mask]
+        sims = sims[mask]
+
+    if len(idx) == 0:
+        return "", []
+
+    top_local = np.argsort(-sims)[:k]
+    top_idx = idx[top_local]
+
     selected = [docs[int(i)] for i in top_idx]
     context = "\n\n".join(
         [f"Source: {d['file']} (page {d['page']}, chunk {d['chunk']})\n{d['text']}"
          for d in selected]
     )
     return context, selected
+
+def retrieve_context_with_neighbors(
+    question: str,
+    docs: list[dict],
+    doc_embs: np.ndarray,
+    k: int,
+    allowed_files: Optional[set[str]] = None,
+    neighbor_radius: int = 1,
+):
+    """
+    Recupera top-k por embeddings y además agrega vecinos (chunks cercanos)
+    para evitar perder la frase exacta que responde.
+    SIN keywords. Esto mejora para cualquier pregunta.
+    """
+    q_emb = embed_texts([question])
+    sims = cosine_sim_matrix(doc_embs, q_emb).reshape(-1)
+
+    idx = np.arange(len(docs))
+    if allowed_files:
+        mask = np.array([d["file"] in allowed_files for d in docs], dtype=bool)
+        idx = idx[mask]
+        sims = sims[mask]
+
+    top_local = np.argsort(-sims)[:k]
+    top_idx = idx[top_local].tolist()
+
+    # Agregar vecinos por (file,page) y chunk +/- radius
+    want = set(top_idx)
+    # índice rápido: (file,page,chunk)->global_i
+    pos2i = {(d["file"], d["page"], d["chunk"]): i for i, d in enumerate(docs)}
+
+    for gi in top_idx:
+        d = docs[int(gi)]
+        for delta in range(-neighbor_radius, neighbor_radius + 1):
+            if delta == 0:
+                continue
+            key = (d["file"], d["page"], d["chunk"] + delta)
+            if key in pos2i:
+                want.add(pos2i[key])
+
+    selected = [docs[int(i)] for i in sorted(want)]
+    context = "\n\n".join(
+        [f"Source: {d['file']} (page {d['page']}, chunk {d['chunk']})\n{d['text']}"
+         for d in selected]
+    )
+    return context, selected
+
+
+def retrieve_context_fallback(
+    question: str,
+    docs: list[dict],
+    doc_embs: np.ndarray,
+    allowed_files: set[str],
+    k_primary: int = 6,
+    k_fallback: int = 16,
+):
+    """
+    1er intento: k pequeño + vecinos
+    Si el contexto es pobre, 2do intento: k más grande + más vecinos
+    SIN keywords.
+    """
+    ctx1, src1 = retrieve_context_with_neighbors(
+        question, docs, doc_embs, k=k_primary, allowed_files=allowed_files, neighbor_radius=1
+    )
+
+    # Heurística genérica de "contexto pobre": muy corto o muy repetitivo
+    too_short = len(ctx1) < 1200
+    if not too_short:
+        return ctx1, src1
+
+    ctx2, src2 = retrieve_context_with_neighbors(
+        question, docs, doc_embs, k=k_fallback, allowed_files=allowed_files, neighbor_radius=2
+    )
+    return ctx2, src2
 
 
 def ask_llm_chat(question: str, context: str, history: list, max_turns: int = 30) -> str:
@@ -898,7 +1100,6 @@ if section == "consulta":
     normalized = []
     for m in st.session_state.messages:
         if isinstance(m, dict):
-            # Asegura llaves mínimas
             normalized.append({
                 "role": m.get("role", "bot"),
                 "text": m.get("text", ""),
@@ -906,10 +1107,10 @@ if section == "consulta":
                 "chart_data": m.get("chart_data"),
             })
         else:
-            # Si alguien metió un string u otro tipo, lo convertimos a mensaje bot
             normalized.append({"role": "bot", "text": str(m)})
 
     st.session_state.messages = normalized
+
     for m in st.session_state.messages:
         role = m.get("role", "")
         txt = _safe_html_text(m.get("text", ""))
@@ -917,15 +1118,15 @@ if section == "consulta":
         if role == "user":
             st.markdown(f"""
             <div class="msg" style="justify-content:flex-end;">
-            <div class="bubble user">{txt}</div>
-            <div class="avatar user"></div>
+              <div class="bubble user">{txt}</div>
+              <div class="avatar user"></div>
             </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
             <div class="msg" style="justify-content:flex-start;">
-            <div class="avatar bot"></div>
-            <div class="bubble bot">{txt}</div>
+              <div class="avatar bot"></div>
+              <div class="bubble bot">{txt}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -935,12 +1136,12 @@ if section == "consulta":
                 _render_sources(m["sources"])
 
     # ---------------------------
-    # Parámetros de consulta (fijos)
+    # Parámetros de consulta
     # ---------------------------
     max_pages = 60
     chunk_chars = 1200
     overlap = 200
-    top_k = 6
+    top_k = 12
 
     agents = list_agents()
 
@@ -962,29 +1163,85 @@ if section == "consulta":
             st.info(agents[selected_agent_key]["description"])
 
     # ---------------------------
-    # Botones Prompt preestablecidos
+    # PDFs disponibles
+    # ---------------------------
+    all_pdfs = list_all_pdfs_in_bucket()
+
+    if not all_pdfs:
+        st.warning("No se encontraron PDFs en el bucket.")
+        st.stop()
+
+    selected_pdf = None
+    selected_legal_docs = []
+
+    # ---------------------------
+    # Selección de documentos
+    # ---------------------------
+    if mode == "Por agente" and selected_agent_key == "legal":
+        codigo_civil_pdf = find_codigo_civil_pdf(all_pdfs)
+
+        st.markdown("#### Consulta legal multi-documento")
+
+        if not codigo_civil_pdf:
+            st.error("No encontré el PDF del Código Civil en el bucket. Renómbralo de forma que incluya 'codigo civil'.")
+            st.stop()
+
+        st.text_input(
+            "Documento legal obligatorio",
+            value=codigo_civil_pdf,
+            disabled=True,
+        )
+
+        additional_options = [p for p in all_pdfs if p != codigo_civil_pdf]
+
+        selected_extra_docs = st.multiselect(
+            "Selecciona 2 documentos adicionales",
+            options=additional_options,
+            default=[],
+            max_selections=2,
+            help="Además del Código Civil, elige exactamente 2 documentos para la consulta legal.",
+        )
+
+        if len(selected_extra_docs) != 2:
+            st.caption("Debes elegir exactamente 2 documentos adicionales.")
+        else:
+            selected_legal_docs = unique_preserve_order(
+                [codigo_civil_pdf] + selected_extra_docs
+            )
+            st.caption("Fuentes legales activas:")
+            for doc in selected_legal_docs:
+                st.write(f"- {doc}")
+
+    else:
+        selected_pdf = st.selectbox(
+            "Documento a consultar",
+            options=all_pdfs,
+            index=0,
+        )
+        st.caption(f"Consultando SOLO: {selected_pdf}")
+
+    # ---------------------------
+    # Botones prompt preestablecidos
     # ---------------------------
     chip_prompts = {
-    "📌 Resumen ejecutivo": "Dame un resumen ejecutivo del contrato. Incluye puntos clave, riesgos y próximos pasos.",
-    "⚠️ Riesgos operativos": "Identifica riesgos operativos del contrato: mantenimiento, servicios, seguros, penalizaciones y restricciones.",
-    "💰 Simulación de pagos": "Simula el flujo de pagos: renta, incrementos, indexaciones y fechas relevantes. Indica supuestos si faltan datos.",
-    "✅ Checklist de obligaciones": "Genera un checklist de obligaciones del arrendatario y arrendador con evidencia (cláusulas) si aplica."
-}
+        "📌 Resumen ejecutivo": "Dame un resumen ejecutivo del contrato. Incluye puntos clave, riesgos y próximos pasos.",
+        "⚠️ Riesgos operativos": "Identifica riesgos operativos del contrato: mantenimiento, servicios, seguros, penalizaciones y restricciones.",
+        "💰 Simulación de pagos": "Simula el flujo de pagos: renta, incrementos, indexaciones y fechas relevantes. Indica supuestos si faltan datos.",
+        "✅ Checklist de obligaciones": "Genera un checklist de obligaciones del arrendatario y arrendador con evidencia (cláusulas) si aplica."
+    }
 
     st.markdown('<div class="chips">', unsafe_allow_html=True)
-
     c1, c2, c3, c4 = st.columns(4)
     cols = [c1, c2, c3, c4]
 
     for (label, prompt), col in zip(chip_prompts.items(), cols):
         with col:
             if st.button(label, key=f"chip_{label}"):
-                st.session_state["question_input"] = prompt  # llena el input
-
-    st.markdown('</div>', unsafe_allow_html=True)
+                st.session_state["question_input"] = prompt
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ---------------------------
-    # Input + Enviar (sin label vacío)
+    # Input + Enviar
     # ---------------------------
     question = st.text_input(
         "Pregunta",
@@ -999,62 +1256,108 @@ if section == "consulta":
     # ---------------------------
     if ask and question.strip():
         q = question.strip()
-
-        # Guardar mensaje del usuario
         st.session_state.messages.append({"role": "user", "text": q})
 
+        chart_data = None
+        sources = []
+        final_answer = ""
+
         with st.spinner("Procesando..."):
-            docs, doc_embs = build_index(max_pages, chunk_chars, overlap)
-            if not docs:
-                st.error("No PDFs found")
-                st.stop()
+            # Determinar archivos a consultar
+            if mode == "Por agente" and selected_agent_key == "legal":
+                if len(selected_legal_docs) != 3:
+                    st.warning("Para el agente legal debes consultar el Código Civil + 2 documentos adicionales.")
+                    st.stop()
 
-            context, sources = retrieve_context(q, docs, doc_embs, top_k)
-
-            chart_data = None  # ✅ evita 'chart_data' no definido
-
-            if mode == "General":
-                final_answer = ask_llm_chat(q, context, st.session_state.messages, max_turns=12)
+                files_for_query = tuple(selected_legal_docs)
+                allowed_files = set(selected_legal_docs)
 
             else:
-                # 1) orquestador (si lo quieres mantener)
-                results = run_orchestrator(q, context, agent_key=selected_agent_key)
-                final_answer = "\n\n".join([f"{k}: {v}" for k, v in results.items()])
+                if not selected_pdf:
+                    st.warning("Debes seleccionar un documento para consultar.")
+                    st.stop()
 
-                # 2) si quieres que también sea multi-turn con LLM,
-                #    puedes reemplazar lo anterior por:
-                # final_answer = ask_llm_chat(q, context, st.session_state.messages, max_turns=12)
+                files_for_query = (selected_pdf,)
+                allowed_files = {selected_pdf}
 
-                # 3) finanzas (si aplica)
-                if selected_agent_key == "finanzas":
-                    # OJO: asegúrate de tener estas funciones definidas:
-                    # extract_finance_numbers, FinanceInputs, project_cashflows
-                    numbers = extract_finance_numbers(context)
-                    extracted = {
-                        "lease_type": "retail" if numbers.get("variable_pct") else "comercial",
-                        "rent": {
-                            "base_monthly": numbers.get("base_monthly"),
-                            "variable_pct_over_sales": numbers.get("variable_pct"),
-                            "breakpoint_sales": numbers.get("breakpoint_sales"),
-                        },
-                    }
-                    fin = FinanceInputs(
-                        years=int(numbers.get("lease_years") or 3),
-                        escalation_rate_annual=(numbers.get("escalation_pct") or 4.0) / 100.0,
+            # Indexar SOLO los archivos elegidos
+            docs, doc_embs = build_index(
+                max_pages,
+                chunk_chars,
+                overlap,
+                files_to_index=files_for_query
+            )
+
+            if not docs:
+                st.error("No se pudieron indexar los documentos seleccionados.")
+                st.stop()
+
+            # Retrieval robusto
+            context, sources = retrieve_context_fallback(
+                q,
+                docs,
+                doc_embs,
+                allowed_files=allowed_files,
+                k_primary=top_k,
+                k_fallback=16
+            )
+
+            # Respuesta
+            if mode == "General":
+                final_answer = ask_llm_chat(
+                    q,
+                    context,
+                    st.session_state.messages,
+                    max_turns=12
+                )
+
+            else:
+                if selected_agent_key == "legal":
+                    from agents.legal import run_legal_agent
+
+                    final_answer = run_legal_agent(
+                        question=q,
+                        context=context,
+                        legal_sources={
+                            "codigo_civil": selected_legal_docs[0],
+                            "documentos_adicionales": selected_legal_docs[1:],
+                        }
                     )
-                    chart_data = project_cashflows(extracted, fin)
-                    chart_data["numbers"] = numbers
 
-        # Guardar respuesta del bot (como un mensaje nuevo)
+                else:
+                    results = run_orchestrator(q, context, agent_key=selected_agent_key)
+                    final_answer = "\n\n".join(
+                        [f"{k}: {v}" for k, v in results.items()]
+                    )
+
+                    if selected_agent_key == "finanzas":
+                        numbers = extract_finance_numbers(context)
+                        extracted = {
+                            "lease_type": "retail" if numbers.get("variable_pct") else "comercial",
+                            "rent": {
+                                "base_monthly": numbers.get("base_monthly"),
+                                "variable_pct_over_sales": numbers.get("variable_pct"),
+                                "breakpoint_sales": numbers.get("breakpoint_sales"),
+                            },
+                        }
+
+                        fin = FinanceInputs(
+                            years=int(numbers.get("lease_years") or 3),
+                            escalation_rate_annual=(numbers.get("escalation_pct") or 4.0) / 100.0,
+                        )
+
+                        chart_data = project_cashflows(extracted, fin)
+                        chart_data["numbers"] = numbers
+
         bot_msg = {"role": "bot", "text": final_answer}
+
         if sources:
             bot_msg["sources"] = sources
+
         if chart_data is not None:
             bot_msg["chart_data"] = chart_data
 
         st.session_state.messages.append(bot_msg)
-
-        # limpiar input cambiando el key (tu estrategia actual)
         st.session_state.input_counter += 1
         st.rerun()
 
