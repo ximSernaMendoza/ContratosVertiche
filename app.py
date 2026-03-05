@@ -265,10 +265,10 @@ st.markdown(
       div.stButton > button {{
         border-radius: 12px !important;
         border: 1px solid rgba(79,59,6,0.18) !important;
-        background: linear-gradient(135deg, rgba(150,99,104,0.95), rgba(214,157,150,0.95)) !important;
-        color: white !important;
+        background: rgba(255,255,255,0.85) !important;
+        color: var(--brown-main) !important;
         font-weight: 700 !important;
-        padding: .55rem .9rem !important;
+        padding: 0.01rem .7rem !important;
         box-shadow: 0 10px 18px rgba(150,99,104,0.25) !important;
       }}
       div.stButton > button:hover {{
@@ -361,8 +361,121 @@ section[data-testid="stSidebar"] .stButton {{
   border: none !important;
 }}
 
+/* ----------------------------
+   Input
+---------------------------- */
+/* Chat input container */
+div[data-testid="stChatInput"] {{
+    background-color: rgba(255,255,255,0.9) !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(150,99,104,0.25) !important;
+}}
 
-    </style>
+/* Input interno */
+div[data-testid="stChatInput"] textarea {{
+    background-color: rgba(255,255,255,0.95) !important;
+    color: #4f3b06 !important;
+}}
+
+/* Placeholder */
+div[data-testid="stChatInput"] textarea::placeholder {{
+    color: #966368 !important;
+    }}
+
+div[data-testid="stChatInput"] button {{
+    background: #966368 !important;
+    border-radius: 10px !important;
+    border: none !important;
+    color: white !important;
+}}
+[data-testid="stChatMessageContainer"] {{
+    background-color: #d69d96 !important;
+}}
+/* Contenedor del chat completo */
+[data-testid="stChatInputContainer"] {{
+    background: #d69d96 !important;
+}}
+/* Barra inferior donde vive el chat */
+[data-testid="stBottomBlockContainer"] {{
+    background-color: #d69d96 !important;
+}}
+
+/* ----------------------------
+   Agentes descripción
+---------------------------- */
+/* Selectbox principal */
+div[data-baseweb="select"] > div {{
+    background-color: #966368   !important;
+    color: white !important;
+    border: 1px solid rgba(79,59,6,0.25) !important;
+}}
+
+/* Texto dentro */
+div[data-baseweb="select"] span {{
+    color: #4f3b06 !important;
+}}
+/* Flecha */
+div[data-baseweb="select"] svg {{
+    fill: #4f3b06 !important;
+}}
+
+/* Menú desplegado */
+ul[role="listbox"] {{
+    background-color: white !important;
+}}
+
+ul[role="listbox"] li {{
+    color: #4f3b06 !important;
+}}
+
+/* Caja de info */
+div[data-testid="stAlert"] {{
+    background-color: #966368!important;
+    border-left: 6px solid #966368 !important; #!!!!!!!!!!!!!!!!!!!!!!!!!!1111
+    color: #966368 !important;
+}}
+
+/* Texto dentro */
+div[data-testid="stAlert"] p {{
+    color: white !important;
+}}
+
+/* El contenedor del alert */
+div[data-testid="stAlert"]{{
+  background: rgba(214,157,150,0.30) !important;   /* rosa suave */
+  border-left: 6px solid #966368 !important;
+  border-radius: 14px !important;
+}}
+
+/* La capa interna 
+div[data-testid="stAlert"] > div{{
+  background: transparent !important;         
+}}
+
+/* A veces Streamlit mete otro wrapper */
+div[data-testid="stAlert"] > div > div{{
+  background: transparent !important;             /* QUITA la capa */
+}}
+
+/* Texto y bullets dentro */
+div[data-testid="stAlert"] *{{
+  color: white !important;
+}}
+
+/* Icono  */
+div[data-testid="stAlert"] svg{{
+  fill: #4f3b06 !important;
+}}
+
+div[data-testid="stAlert"] > div,
+div[data-testid="stAlert"] > div > div,
+div[role="alert"] > div,
+div[role="alert"] > div > div{{
+  background: transparent !important;
+  box-shadow: none !important;
+}}
+
+</style>
     """,
     unsafe_allow_html=True,
 )
@@ -509,30 +622,6 @@ else:
 
 client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
-@st.cache_data(ttl=900)
-def list_all_pdfs_in_bucket() -> list[str]:
-    if bucket is None:
-        return []
-
-    out: list[str] = []
-
-    def walk(prefix: str):
-        items = bucket.list(path=prefix) or []
-        for it in items:
-            name = (it.get("name") or "").strip()
-            if not name:
-                continue
-
-            is_probably_folder = (it.get("id") is None) and (it.get("metadata") is None) and ("." not in name)
-            if is_probably_folder:
-                walk(f"{prefix}{name}/")
-            else:
-                if name.lower().endswith(".pdf"):
-                    out.append(f"{prefix}{name}")
-
-    walk("")
-    return sorted(set(out))
-
 # ---------------------------
 # Helpers RAG
 # --------------------------- 
@@ -574,19 +663,16 @@ def build_index(max_pages: int, chunk_chars: int, overlap: int):
     if bucket is None:
         return [], np.zeros((0, 1), dtype=np.float32)
 
-    pdf_files = list_all_pdfs_in_bucket()
+    files = bucket.list(path="")
+    pdf_files = [f["name"] for f in files if f.get("name", "").lower().endswith(".pdf")]
+    
     docs, texts = [], []
-
-    for path in pdf_files:
-        try:
-            pdf_bytes = bucket.download(path)
-        except Exception:
-            continue
-
+    for name in pdf_files:
+        pdf_bytes = bucket.download(name)
         pages = pdf_bytes_to_pages(pdf_bytes, max_pages)
         for page_num, page_text in pages:
             for ci, chunk in enumerate(chunk_text(page_text, chunk_chars, overlap)):
-                docs.append({"file": path, "page": page_num, "chunk": ci, "text": chunk})
+                docs.append({"file": name, "page": page_num, "chunk": ci, "text": chunk})
                 texts.append(chunk)
 
     if not texts:
@@ -595,7 +681,6 @@ def build_index(max_pages: int, chunk_chars: int, overlap: int):
     embs = []
     for i in range(0, len(texts), 64):
         embs.append(embed_texts(texts[i:i + 64]))
-
     return docs, np.vstack(embs)
 
 def retrieve_context(question: str, docs, doc_embs, k: int):
@@ -610,22 +695,46 @@ def retrieve_context(question: str, docs, doc_embs, k: int):
     return context, selected
 
 
-def ask_llm(question: str, context: str):
+def ask_llm_chat(question: str, context: str, history: list, max_turns: int = 30) -> str:
+    """
+    history: lista de dicts {"role": "user"|"bot", "text": "..."} guardada en session_state
+    max_turns: cuántos mensajes previos (pares user/bot) usar como memoria corta
+    """
+
+    # tomar solo los últimos mensajes (memoria corta)
+    recent = history[-max_turns:] if len(history) > max_turns else history
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Eres un asistente especializado en análisis de contratos.\n"
+                "Responde usando el CONTEXTO recuperado del RAG. Si falta información, di 'No especificado en contrato'.\n"
+                "Sé claro, con bullets si ayuda."
+            ),
+        }
+    ]
+
+    # historial (sin contexto viejo)
+    for m in recent:
+        r = m.get("role", "")
+        if r == "user":
+            messages.append({"role": "user", "content": m.get("text", "")})
+        elif r == "bot":
+            messages.append({"role": "assistant", "content": m.get("text", "")})
+
+    # mensaje actual con contexto
+    messages.append({
+        "role": "user",
+        "content": f"CONTEXTO (RAG):\n{context}\n\nPREGUNTA:\n{question}"
+    })
+
     resp = client.chat.completions.create(
         model=CHAT_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a legal assistant. Answer ONLY using the provided context. If missing, say you don't know."
-            },
-            {
-                "role": "user",
-                "content": f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
-            }
-        ],
-        temperature=0.1,
+        messages=messages,
+        temperature=0.2,
     )
-    return resp.choices[0].message.content or ""
+    return (resp.choices[0].message.content or "").strip()
 
 def safe_filename(name: str) -> str:
     name = name.replace("\\", "/").split("/")[-1]
@@ -772,6 +881,11 @@ with right:
 
 st.write("")
 
+def _safe_html_text(text: str) -> str:
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+
+#txt = _safe_html_text(m.get("text",""))
+
 # ---------------------------
 # BODY: Tabs
 # ---------------------------
@@ -781,30 +895,40 @@ if section == "consulta":
     # ---------------------------
     # Render messages (burbujas)
     # ---------------------------
+    normalized = []
     for m in st.session_state.messages:
-        role = m["role"]
-        txt = m["text"]
+        if isinstance(m, dict):
+            # Asegura llaves mínimas
+            normalized.append({
+                "role": m.get("role", "bot"),
+                "text": m.get("text", ""),
+                "sources": m.get("sources"),
+                "chart_data": m.get("chart_data"),
+            })
+        else:
+            # Si alguien metió un string u otro tipo, lo convertimos a mensaje bot
+            normalized.append({"role": "bot", "text": str(m)})
+
+    st.session_state.messages = normalized
+    for m in st.session_state.messages:
+        role = m.get("role", "")
+        txt = _safe_html_text(m.get("text", ""))
 
         if role == "user":
-            st.markdown(
-                f"""
-                <div class="msg" style="justify-content:flex-end;">
-                  <div class="bubble user">{txt}</div>
-                  <div class="avatar user"></div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"""
+            <div class="msg" style="justify-content:flex-end;">
+            <div class="bubble user">{txt}</div>
+            <div class="avatar user"></div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.markdown(
-                f"""
-                <div class="msg" style="justify-content:flex-start;">
-                  <div class="avatar bot"></div>
-                  <div class="bubble bot">{txt}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"""
+            <div class="msg" style="justify-content:flex-start;">
+            <div class="avatar bot"></div>
+            <div class="bubble bot">{txt}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
             if m.get("chart_data"):
                 _render_finance_chart(m["chart_data"])
             if m.get("sources"):
@@ -860,12 +984,23 @@ if section == "consulta":
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ---------------------------
+    # Input + Enviar (sin label vacío)
+    # ---------------------------
+    question = st.text_input(
+        "Pregunta",
+        placeholder="Pregunta lo que quieras...",
+        label_visibility="collapsed",
+        key=f"question_input_{st.session_state.input_counter}",
+    )
+    ask = st.button("Enviar", use_container_width=False)
+
+    # ---------------------------
     # Ejecutar consulta
     # ---------------------------
     if ask and question.strip():
         q = question.strip()
-        chart_data = None
 
+        # Guardar mensaje del usuario
         st.session_state.messages.append({"role": "user", "text": q})
 
         with st.spinner("Procesando..."):
@@ -876,40 +1011,50 @@ if section == "consulta":
 
             context, sources = retrieve_context(q, docs, doc_embs, top_k)
 
+            chart_data = None  # ✅ evita 'chart_data' no definido
+
             if mode == "General":
-                final_answer = ask_llm(q, context)
+                final_answer = ask_llm_chat(q, context, st.session_state.messages, max_turns=12)
+
             else:
+                # 1) orquestador (si lo quieres mantener)
                 results = run_orchestrator(q, context, agent_key=selected_agent_key)
                 final_answer = "\n\n".join([f"{k}: {v}" for k, v in results.items()])
 
+                # 2) si quieres que también sea multi-turn con LLM,
+                #    puedes reemplazar lo anterior por:
+                # final_answer = ask_llm_chat(q, context, st.session_state.messages, max_turns=12)
+
+                # 3) finanzas (si aplica)
                 if selected_agent_key == "finanzas":
-                    try:
-                        numbers = extract_finance_numbers(context)
+                    # OJO: asegúrate de tener estas funciones definidas:
+                    # extract_finance_numbers, FinanceInputs, project_cashflows
+                    numbers = extract_finance_numbers(context)
+                    extracted = {
+                        "lease_type": "retail" if numbers.get("variable_pct") else "comercial",
+                        "rent": {
+                            "base_monthly": numbers.get("base_monthly"),
+                            "variable_pct_over_sales": numbers.get("variable_pct"),
+                            "breakpoint_sales": numbers.get("breakpoint_sales"),
+                        },
+                    }
+                    fin = FinanceInputs(
+                        years=int(numbers.get("lease_years") or 3),
+                        escalation_rate_annual=(numbers.get("escalation_pct") or 4.0) / 100.0,
+                    )
+                    chart_data = project_cashflows(extracted, fin)
+                    chart_data["numbers"] = numbers
 
-                        extracted = {
-                            "lease_type": "retail" if numbers.get("variable_pct") else "comercial",
-                            "rent": {
-                                "base_monthly": numbers.get("base_monthly"),
-                                "variable_pct_over_sales": numbers.get("variable_pct"),
-                                "breakpoint_sales": numbers.get("breakpoint_sales"),
-                            },
-                        }
+        # Guardar respuesta del bot (como un mensaje nuevo)
+        bot_msg = {"role": "bot", "text": final_answer}
+        if sources:
+            bot_msg["sources"] = sources
+        if chart_data is not None:
+            bot_msg["chart_data"] = chart_data
 
-                        fin = FinanceInputs(
-                            years=int(numbers.get("lease_years") or 3),
-                            escalation_rate_annual=(numbers.get("escalation_pct") or 4.0) / 100.0,
-                        )
+        st.session_state.messages.append(bot_msg)
 
-                        chart_data = project_cashflows(extracted, fin)
-                        chart_data["numbers"] = numbers
-
-                    except Exception as e:
-                        st.warning(f"No se pudo generar la gráfica financiera: {e}")
-
-        st.session_state.messages.append(
-            {"role": "bot", "text": final_answer, "chart_data": chart_data, "sources": sources}
-        )
-
+        # limpiar input cambiando el key (tu estrategia actual)
         st.session_state.input_counter += 1
         st.rerun()
 
@@ -967,13 +1112,14 @@ elif section == "subir":
     st.subheader("Archivos en el bucket")
 
     try:
-        pdfs = list_all_pdfs_in_bucket()
+        root_files = bucket.list(path="")
+        names = [it.get("name") for it in (root_files or []) if it.get("name")]
 
-        if pdfs:
-            with st.expander(f"📂 PDFs detectados ({len(pdfs)})", expanded=False):
-                st.markdown("\n".join([f"- {p}" for p in pdfs]))
+        if names:
+            with st.expander(f"📂 Contratos ({len(names)})", expanded=False):
+                st.markdown("\n".join([f"- {n}" for n in sorted(names)]))
         else:
-            st.write("No se detectaron PDFs en el bucket (ni en carpetas).")
+            st.write("No hay archivos en la raíz del bucket.")
 
     except Exception as e:
         st.error(f"No pude listar archivos: {e}")
