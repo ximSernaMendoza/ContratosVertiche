@@ -860,23 +860,12 @@ if section == "consulta":
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ---------------------------
-    # Input + Enviar (sin label vacío)
-    # ---------------------------
-    question = st.text_input(
-        "Pregunta",
-        placeholder="Pregunta lo que quieras...",
-        label_visibility="collapsed",
-        key=f"question_input_{st.session_state.input_counter}",
-    )
-    ask = st.button("Enviar", use_container_width=False)
-
-    # ---------------------------
     # Ejecutar consulta
     # ---------------------------
     if ask and question.strip():
         q = question.strip()
+        chart_data = None
 
-        # Guardar mensaje del usuario
         st.session_state.messages.append({"role": "user", "text": q})
 
         with st.spinner("Procesando..."):
@@ -891,32 +880,38 @@ if section == "consulta":
                 final_answer = ask_llm(q, context)
             else:
                 results = run_orchestrator(q, context, agent_key=selected_agent_key)
-                # Unir respuestas en un solo texto para el chat
                 final_answer = "\n\n".join([f"{k}: {v}" for k, v in results.items()])
 
                 if selected_agent_key == "finanzas":
-                    numbers = extract_finance_numbers(context)
-                    extracted = {
-                        "lease_type": "retail" if numbers.get("variable_pct") else "comercial",
-                        "rent": {
-                            "base_monthly": numbers.get("base_monthly"),
-                            "variable_pct_over_sales": numbers.get("variable_pct"),
-                            "breakpoint_sales": numbers.get("breakpoint_sales"),
-                        },
-                    }
-                    fin = FinanceInputs(
-                        years=int(numbers.get("lease_years") or 3),
-                        escalation_rate_annual=(numbers.get("escalation_pct") or 4.0) / 100.0,
-                    )
-                    chart_data = project_cashflows(extracted, fin)
-                    chart_data["numbers"] = numbers
+                    try:
+                        numbers = extract_finance_numbers(context)
 
-        # Guardar respuesta del bot
-        st.session_state.messages.append({"role": "bot", "text": final_answer, "chart_data": chart_data})
-        # Limpiar input cambiando el key del widget
+                        extracted = {
+                            "lease_type": "retail" if numbers.get("variable_pct") else "comercial",
+                            "rent": {
+                                "base_monthly": numbers.get("base_monthly"),
+                                "variable_pct_over_sales": numbers.get("variable_pct"),
+                                "breakpoint_sales": numbers.get("breakpoint_sales"),
+                            },
+                        }
+
+                        fin = FinanceInputs(
+                            years=int(numbers.get("lease_years") or 3),
+                            escalation_rate_annual=(numbers.get("escalation_pct") or 4.0) / 100.0,
+                        )
+
+                        chart_data = project_cashflows(extracted, fin)
+                        chart_data["numbers"] = numbers
+
+                    except Exception as e:
+                        st.warning(f"No se pudo generar la gráfica financiera: {e}")
+
+        st.session_state.messages.append(
+            {"role": "bot", "text": final_answer, "chart_data": chart_data, "sources": sources}
+        )
+
         st.session_state.input_counter += 1
         st.rerun()
-
 
 
 elif section == "subir":
