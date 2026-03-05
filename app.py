@@ -509,6 +509,30 @@ else:
 
 client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
+@st.cache_data(ttl=900)
+def list_all_pdfs_in_bucket() -> list[str]:
+    if bucket is None:
+        return []
+
+    out: list[str] = []
+
+    def walk(prefix: str):
+        items = bucket.list(path=prefix) or []
+        for it in items:
+            name = (it.get("name") or "").strip()
+            if not name:
+                continue
+
+            is_probably_folder = (it.get("id") is None) and (it.get("metadata") is None) and ("." not in name)
+            if is_probably_folder:
+                walk(f"{prefix}{name}/")
+            else:
+                if name.lower().endswith(".pdf"):
+                    out.append(f"{prefix}{name}")
+
+    walk("")
+    return sorted(set(out))
+
 # ---------------------------
 # Helpers RAG
 # --------------------------- 
@@ -550,16 +574,19 @@ def build_index(max_pages: int, chunk_chars: int, overlap: int):
     if bucket is None:
         return [], np.zeros((0, 1), dtype=np.float32)
 
-    files = bucket.list(path="")
-    pdf_files = [f["name"] for f in files if f.get("name", "").lower().endswith(".pdf")]
-    
+    pdf_files = list_all_pdfs_in_bucket()
     docs, texts = [], []
-    for name in pdf_files:
-        pdf_bytes = bucket.download(name)
+
+    for path in pdf_files:
+        try:
+            pdf_bytes = bucket.download(path)
+        except Exception:
+            continue
+
         pages = pdf_bytes_to_pages(pdf_bytes, max_pages)
         for page_num, page_text in pages:
             for ci, chunk in enumerate(chunk_text(page_text, chunk_chars, overlap)):
-                docs.append({"file": name, "page": page_num, "chunk": ci, "text": chunk})
+                docs.append({"file": path, "page": page_num, "chunk": ci, "text": chunk})
                 texts.append(chunk)
 
     if not texts:
@@ -568,6 +595,7 @@ def build_index(max_pages: int, chunk_chars: int, overlap: int):
     embs = []
     for i in range(0, len(texts), 64):
         embs.append(embed_texts(texts[i:i + 64]))
+
     return docs, np.vstack(embs)
 
 def retrieve_context(question: str, docs, doc_embs, k: int):
@@ -944,14 +972,13 @@ elif section == "subir":
     st.subheader("Archivos en el bucket")
 
     try:
-        root_files = bucket.list(path="")
-        names = [it.get("name") for it in (root_files or []) if it.get("name")]
+        pdfs = list_all_pdfs_in_bucket()
 
-        if names:
-            with st.expander(f"📂 Contratos ({len(names)})", expanded=False):
-                st.markdown("\n".join([f"- {n}" for n in sorted(names)]))
+        if pdfs:
+            with st.expander(f"📂 PDFs detectados ({len(pdfs)})", expanded=False):
+                st.markdown("\n".join([f"- {p}" for p in pdfs]))
         else:
-            st.write("No hay archivos en la raíz del bucket.")
+            st.write("No se detectaron PDFs en el bucket (ni en carpetas).")
 
     except Exception as e:
         st.error(f"No pude listar archivos: {e}")
