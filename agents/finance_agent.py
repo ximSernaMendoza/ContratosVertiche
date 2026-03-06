@@ -25,6 +25,7 @@ Si un campo no aparece explícito en el contexto, usa null. No inventes valores.
 
 def extract_finance_numbers(context: str) -> dict:
     """Extrae campos financieros clave del contexto RAG como JSON estructurado."""
+    context = context[:MAX_CONTEXT_CHARS]
     resp = client.chat.completions.create(
         model=CHAT_MODEL,
         messages=[
@@ -84,11 +85,14 @@ FORMATO DE SALIDA (OBLIGATORIO, exactamente 5 secciones):
 - La cita debe tener <=25 palabras.
 """
 
+MAX_CONTEXT_CHARS = 5000  # ~1250 tokens, deja margen para system prompt y respuesta
+
 def run_financial_agent(question: str, context: str) -> str:
     """
     Agente Financiero (Extractor):
     - Lee el contexto RAG (fragmentos del contrato)
     """
+    context = context[:MAX_CONTEXT_CHARS]
     user_msg = f"""
 CONTEXTO (fragmentos con Source):
 
