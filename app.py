@@ -6,6 +6,8 @@ import fitz
 from supabase import create_client
 from openai import OpenAI
 from agents.router import run_orchestrator, list_agents
+from agents.finance_agent import extract_finance_numbers
+from core.finance import FinanceInputs, project_cashflows
 from datetime import datetime, date
 import pandas as pd
 import plotly.express as px
@@ -1221,6 +1223,17 @@ if section == "consulta":
         st.caption(f"Consultando SOLO: {selected_pdf}")
 
     # ---------------------------
+    # Input + Enviar
+    # ---------------------------
+    question = st.text_input(
+        "Pregunta",
+        placeholder="Pregunta lo que quieras...",
+        label_visibility="collapsed",
+        key=f"question_input_{st.session_state.input_counter}",
+    )
+    ask = st.button("Enviar", use_container_width=False)
+
+    # ---------------------------
     # Botones prompt preestablecidos
     # ---------------------------
     chip_prompts = {
@@ -1233,29 +1246,19 @@ if section == "consulta":
     st.markdown('<div class="chips">', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     cols = [c1, c2, c3, c4]
-
+    pending_chip_prompt = None
     for (label, prompt), col in zip(chip_prompts.items(), cols):
         with col:
             if st.button(label, key=f"chip_{label}"):
-                st.session_state["question_input"] = prompt
+                pending_chip_prompt = prompt
     st.markdown("</div>", unsafe_allow_html=True)
-
-    # ---------------------------
-    # Input + Enviar
-    # ---------------------------
-    question = st.text_input(
-        "Pregunta",
-        placeholder="Pregunta lo que quieras...",
-        label_visibility="collapsed",
-        key=f"question_input_{st.session_state.input_counter}",
-    )
-    ask = st.button("Enviar", use_container_width=False)
 
     # ---------------------------
     # Ejecutar consulta
     # ---------------------------
-    if ask and question.strip():
-        q = question.strip()
+    effective_q = question.strip() if (ask and question.strip()) else pending_chip_prompt
+    if effective_q:
+        q = effective_q
         st.session_state.messages.append({"role": "user", "text": q})
 
         chart_data = None
