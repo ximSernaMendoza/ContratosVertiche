@@ -497,17 +497,22 @@ def _render_sources(sources: list):
     if not sources:
         return
 
-    # Agrupar chunks por archivo → páginas únicas
-    files: dict = {}
+    files = {}
     for s in sources:
         fname = s["file"]
         if fname not in files:
-            files[fname] = set()
-        files[fname].add(s["page"])
+            files[fname] = []
+        if s["page"] not in files[fname]:
+            files[fname].append(s["page"])
 
     with st.expander(f"📄 Fuentes consultadas ({len(files)} archivo(s))"):
         for fname, pages in files.items():
-            pages_str = ", ".join(f"p.{p}" for p in sorted(pages))
+            numeric_pages = sorted([p for p in pages if isinstance(p, int)])
+            special_pages = [p for p in pages if not isinstance(p, int)]
+
+            parts = [f"p.{p}" for p in numeric_pages] + [str(p) for p in special_pages]
+            pages_str = ", ".join(parts)
+
             col_name, col_btn = st.columns([3, 1])
             with col_name:
                 st.markdown(f"**{fname}**  \n`{pages_str}`")
@@ -517,7 +522,6 @@ def _render_sources(sources: list):
                     st.link_button("Ver PDF", url)
                 else:
                     st.caption("Sin enlace")
-
 
 # ---------------------------
 # GRÁFICA FINANCIERA
@@ -659,16 +663,20 @@ def list_all_pdfs_in_bucket(prefix: str = "") -> list[str]:
     # quita duplicados y ordena
     return sorted(set(pdfs))
 
-def find_codigo_civil_pdf(all_pdfs: list[str]) -> Optional[str]:
+# --------------------------------------------------
+# Código Civil Federal (siempre obligatorio)
+# --------------------------------------------------
+def find_codigo_civil_federal(all_pdfs: list[str]) -> Optional[str]:
     """
-    Busca automáticamente el PDF del Código Civil.
-    Ajusta las palabras clave según cómo lo tengas guardado.
+    Busca el Código Civil Federal.
+    Debe existir un archivo con 'federal' en el nombre.
     """
     preferred_patterns = [
-        "codigo civil",
-        "código civil",
-        "codigo_civil",
-        "codigocivil",
+        "codigo civil federal",
+        "código civil federal",
+        "codigo_civil_federal",
+        "codigocivilfederal",
+        "federal",
     ]
 
     normalized = []
@@ -676,18 +684,79 @@ def find_codigo_civil_pdf(all_pdfs: list[str]) -> Optional[str]:
         base = os.path.basename(p).lower()
         normalized.append((p, base))
 
-    # 1) match preferente por nombre
     for full_path, base in normalized:
         if any(pat in base for pat in preferred_patterns):
             return full_path
 
-    # 2) fallback: buscar en el path completo
-    for p in all_pdfs:
-        low = p.lower()
-        if any(pat in low for pat in preferred_patterns):
-            return p
-
     return None
+
+
+# --------------------------------------------------
+# Códigos Civiles Estatales
+# --------------------------------------------------
+def find_codigos_civiles_estatales(all_pdfs: list[str]) -> list[str]:
+    """
+    Devuelve los PDFs que probablemente correspondan a códigos civiles estatales.
+
+    Heurísticas:
+    - Excluye el Código Civil Federal.
+    - Excluye contratos.
+    - Acepta archivos cuyo path o nombre sugiera que son códigos estatales,
+      por ejemplo:
+        Colima/Colima.pdf
+        Jalisco/Codigo_Civil_Jalisco.pdf
+        codigos/estados/Colima.pdf
+    """
+
+    estados_mexico = [
+        "aguascalientes", "baja california", "baja california sur", "campeche",
+        "chiapas", "chihuahua", "ciudad de mexico", "coahuila", "colima",
+        "durango", "guanajuato", "guerrero", "hidalgo", "jalisco", "mexico",
+        "michoacan", "morelos", "nayarit", "nuevo leon", "oaxaca", "puebla",
+        "queretaro", "quintana roo", "san luis potosi", "sinaloa", "sonora",
+        "tabasco", "tamaulipas", "tlaxcala", "veracruz", "yucatan", "zacatecas"
+    ]
+
+    state_codes = []
+
+    for p in all_pdfs:
+        full_path = p.lower()
+        base_name = os.path.basename(p).lower()
+
+        # excluir federal
+        if "federal" in full_path:
+            continue
+
+        # excluir contratos
+        if "contrato" in full_path:
+            continue
+
+        # caso 1: nombre/path contiene explícitamente "codigo civil"
+        if (
+            "codigo civil" in full_path
+            or "código civil" in full_path
+            or "codigo_civil" in full_path
+        ):
+            state_codes.append(p)
+            continue
+
+        # caso 2: heurística por carpeta o archivo con nombre de estado
+        for estado in estados_mexico:
+            estado_slug = estado.replace(" ", "_")
+            estado_dash = estado.replace(" ", "-")
+
+            if (
+                f"/{estado}/" in full_path
+                or f"/{estado_slug}/" in full_path
+                or f"/{estado_dash}/" in full_path
+                or base_name == f"{estado}.pdf"
+                or base_name == f"{estado_slug}.pdf"
+                or base_name == f"{estado_dash}.pdf"
+            ):
+                state_codes.append(p)
+                break
+
+    return sorted(set(state_codes))
 
 
 def unique_preserve_order(items: list[str]) -> list[str]:
@@ -709,6 +778,19 @@ def pdf_bytes_to_pages(pdf_bytes: bytes, max_pages: int):
         if t:
             pages.append((i + 1, t))
     return pages
+
+def extract_full_pdf_text(path: str, max_pages: int = 200) -> str:
+    if bucket is None:
+        return ""
+
+    try:
+        pdf_bytes = bucket.download(path)
+        pages = pdf_bytes_to_pages(pdf_bytes, max_pages=max_pages)
+        return "\n\n".join(
+            [f"[Página {page_num}]\n{text}" for page_num, text in pages if text]
+        )
+    except Exception:
+        return ""
 
 def clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
@@ -1180,39 +1262,67 @@ if section == "consulta":
     # Selección de documentos
     # ---------------------------
     if mode == "Por agente" and selected_agent_key == "legal":
-        codigo_civil_pdf = find_codigo_civil_pdf(all_pdfs)
+        st.markdown("#### Consulta legal especializada")
 
-        st.markdown("#### Consulta legal multi-documento")
+        # 1) Código Civil Federal (siempre activo)
+        codigo_federal_pdf = find_codigo_civil_federal(all_pdfs)
 
-        if not codigo_civil_pdf:
-            st.error("No encontré el PDF del Código Civil en el bucket. Renómbralo de forma que incluya 'codigo civil'.")
+        if not codigo_federal_pdf:
+            st.error(
+                "No se encontró el Código Civil Federal en el bucket. "
+                "Asegúrate de que el archivo tenga 'federal' en el nombre."
+            )
             st.stop()
 
         st.text_input(
-            "Documento legal obligatorio",
-            value=codigo_civil_pdf,
+            "Código Civil Federal (siempre activo)",
+            value=codigo_federal_pdf,
             disabled=True,
         )
 
-        additional_options = [p for p in all_pdfs if p != codigo_civil_pdf]
+        # 2) Código Civil Estatal (lo eliges tú)
+        codigos_estatales = find_codigos_civiles_estatales(all_pdfs)
 
-        selected_extra_docs = st.multiselect(
-            "Selecciona 2 documentos adicionales",
-            options=additional_options,
-            default=[],
-            max_selections=2,
-            help="Además del Código Civil, elige exactamente 2 documentos para la consulta legal.",
+        if not codigos_estatales:
+            st.error(
+                "No se encontraron códigos civiles estatales en el bucket."
+            )
+            st.stop()
+
+        codigo_estatal_pdf = st.selectbox(
+            "Selecciona el Código Civil del Estado",
+            options=codigos_estatales,
+            index=0,
+            help="Este código cambiará según el estado que quieras analizar."
         )
 
-        if len(selected_extra_docs) != 2:
-            st.caption("Debes elegir exactamente 2 documentos adicionales.")
-        else:
-            selected_legal_docs = unique_preserve_order(
-                [codigo_civil_pdf] + selected_extra_docs
-            )
-            st.caption("Fuentes legales activas:")
-            for doc in selected_legal_docs:
-                st.write(f"- {doc}")
+        # 3) Contrato (lo eliges tú)
+        contratos = [
+            p for p in all_pdfs
+            if "contrato" in os.path.basename(p).lower()
+        ]
+
+        if not contratos:
+            st.error("No se encontraron contratos en el bucket.")
+            st.stop()
+
+        contrato_pdf = st.selectbox(
+            "Selecciona el contrato a analizar",
+            options=contratos,
+            index=0,
+            help="El agente legal analizará este contrato junto con el Código Federal y el Código Estatal."
+        )
+
+        # Documentos finales del agente legal
+        selected_legal_docs = unique_preserve_order([
+            codigo_federal_pdf,
+            codigo_estatal_pdf,
+            contrato_pdf
+        ])
+
+        st.caption("Fuentes legales activas:")
+        for doc in selected_legal_docs:
+            st.write(f"- {doc}")
 
     else:
         selected_pdf = st.selectbox(
@@ -1221,17 +1331,6 @@ if section == "consulta":
             index=0,
         )
         st.caption(f"Consultando SOLO: {selected_pdf}")
-
-    # ---------------------------
-    # Input + Enviar
-    # ---------------------------
-    question = st.text_input(
-        "Pregunta",
-        placeholder="Pregunta lo que quieras...",
-        label_visibility="collapsed",
-        key=f"question_input_{st.session_state.input_counter}",
-    )
-    ask = st.button("Enviar", use_container_width=False)
 
     # ---------------------------
     # Botones prompt preestablecidos
@@ -1246,31 +1345,43 @@ if section == "consulta":
     st.markdown('<div class="chips">', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     cols = [c1, c2, c3, c4]
-    pending_chip_prompt = None
+
     for (label, prompt), col in zip(chip_prompts.items(), cols):
         with col:
             if st.button(label, key=f"chip_{label}"):
-                pending_chip_prompt = prompt
+                st.session_state["question_input"] = prompt
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # ---------------------------
+    # Input + Enviar
+    # ---------------------------
+    question = st.text_input(
+        "Pregunta",
+        placeholder="Pregunta lo que quieras...",
+        label_visibility="collapsed",
+        key=f"question_input_{st.session_state.input_counter}",
+    )
+    ask = st.button("Enviar", use_container_width=False)
 
     # ---------------------------
     # Ejecutar consulta
     # ---------------------------
-    effective_q = question.strip() if (ask and question.strip()) else pending_chip_prompt
-    if effective_q:
-        q = effective_q
+    if ask and question.strip():
+        q = question.strip()
         st.session_state.messages.append({"role": "user", "text": q})
 
         chart_data = None
         sources = []
         final_answer = ""
 
-        with st.spinner("Procesando..."):
+        with st.spinner("Procesando."):
             # Determinar archivos a consultar
             if mode == "Por agente" and selected_agent_key == "legal":
                 if len(selected_legal_docs) != 3:
-                    st.warning("Para el agente legal debes consultar el Código Civil + 2 documentos adicionales.")
+                    st.warning("Para el agente legal debes seleccionar exactamente 3 documentos: Federal + Estatal + Contrato.")
                     st.stop()
+
+                codigo_federal_pdf, codigo_estatal_pdf, contrato_pdf = selected_legal_docs
 
                 files_for_query = tuple(selected_legal_docs)
                 allowed_files = set(selected_legal_docs)
@@ -1295,36 +1406,77 @@ if section == "consulta":
                 st.error("No se pudieron indexar los documentos seleccionados.")
                 st.stop()
 
-            # Retrieval robusto
-            context, sources = retrieve_context_fallback(
-                q,
-                docs,
-                doc_embs,
-                allowed_files=allowed_files,
-                k_primary=top_k,
-                k_fallback=16
-            )
+            # ---------------------------
+            # FLUJO ESPECIAL DEL AGENTE LEGAL
+            # ---------------------------
+            if mode == "Por agente" and selected_agent_key == "legal":
+                from agents.legal import run_legal_agent
 
-            # Respuesta
-            if mode == "General":
-                final_answer = ask_llm_chat(
+                # 1) Extraer el contrato completo directamente del PDF
+                contract_full_text = extract_full_pdf_text(contrato_pdf, max_pages=max_pages)
+
+                if not contract_full_text.strip():
+                    st.error("No se pudo extraer el texto completo del contrato seleccionado.")
+                    st.stop()
+
+                # 2) Retrieval SOLO del Código Civil Federal
+                federal_context, federal_sources = retrieve_context_fallback(
                     q,
-                    context,
-                    st.session_state.messages,
-                    max_turns=12
+                    docs,
+                    doc_embs,
+                    allowed_files={codigo_federal_pdf},
+                    k_primary=max(6, top_k // 2),
+                    k_fallback=12
+                )
+
+                # 3) Retrieval SOLO del Código Civil Estatal
+                state_context, state_sources = retrieve_context_fallback(
+                    q,
+                    docs,
+                    doc_embs,
+                    allowed_files={codigo_estatal_pdf},
+                    k_primary=max(6, top_k // 2),
+                    k_fallback=12
+                )
+
+                # 4) Fuentes a mostrar
+                sources = [{"file": contrato_pdf, "page": "COMPLETO"}]
+
+                for src in federal_sources + state_sources:
+                    if src not in sources:
+                        sources.append(src)
+
+                # 5) Ejecutar el agente legal nuevo
+                final_answer = run_legal_agent(
+                    question=q,
+                    contract_full_text=contract_full_text,
+                    federal_context=federal_context,
+                    state_context=state_context,
+                    legal_sources={
+                        "codigo_federal": codigo_federal_pdf,
+                        "codigo_estatal": codigo_estatal_pdf,
+                        "contrato": contrato_pdf,
+                    }
                 )
 
             else:
-                if selected_agent_key == "legal":
-                    from agents.legal import run_legal_agent
+                # Retrieval robusto para modo general / otros agentes
+                context, sources = retrieve_context_fallback(
+                    q,
+                    docs,
+                    doc_embs,
+                    allowed_files=allowed_files,
+                    k_primary=top_k,
+                    k_fallback=16
+                )
 
-                    final_answer = run_legal_agent(
-                        question=q,
-                        context=context,
-                        legal_sources={
-                            "codigo_civil": selected_legal_docs[0],
-                            "documentos_adicionales": selected_legal_docs[1:],
-                        }
+                # Respuesta
+                if mode == "General":
+                    final_answer = ask_llm_chat(
+                        q,
+                        context,
+                        st.session_state.messages,
+                        max_turns=12
                     )
 
                 else:
@@ -1630,4 +1782,5 @@ elif section == "dashboard":
 # Footer
 st.markdown('<div class="footer">© Vertiche  · Tecnológico de Monterrey CEM  </div>', unsafe_allow_html=True)
 st.markdown('<div class="footer"> · Ximena Serna Mendoza · Tamara Alejandra Ortiz Villareal · Nathan Isaac García Larios · Mauricio Aguilar Pacheco · </div>', unsafe_allow_html=True)
+
 
