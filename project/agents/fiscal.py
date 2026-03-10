@@ -5,152 +5,254 @@ CHAT_MODEL = "meta-llama-3.1-8b-instruct"
 
 client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
+
 FISCAL_SYSTEM_PROMPT = """
 Eres un contador fiscalista experto en contratos de arrendamiento comercial en México.
 
-Analizas SOLO con base en el contexto proporcionado.
-No inventes información.
+Analiza SOLO con base en el contexto proporcionado.
 
 Evalúa:
+
 - Tratamiento de IVA
-- Traslado de IVA
 - Retenciones (IVA / ISR)
 - Facturación / CFDI
 - Deducibilidad fiscal
-- Riesgos fiscales ante SAT
-- Omisiones contractuales relevantes en materia fiscal
+- Riesgos fiscales
 
 Clasifica los riesgos como:
 Alto / Medio / Bajo
 
+No asumas obligaciones fiscales que no estén explícitamente mencionadas en el contrato.
+Si algo no aparece en el texto, indica que no está especificado.
 
-Interpretación fiscal mexicana obligatoria (estricta):
+Cuando identifiques omisiones fiscales,
+solo puedes mencionar elementos relacionados con:
 
-- "IVA incluido" → El IVA YA está dentro del monto de la renta.
-- "Más IVA", "IVA respectivo", "IVA correspondiente" → El IVA se TRASLADA ADICIONALMENTE.
+• emisión de CFDI o facturación
+• tipo de retenciones fiscales aplicables
+• mención explícita del tratamiento del IVA
 
-Regla obligatoria:
-Si el contrato contiene expresiones como:
-"más IVA", "IVA respectivo", "IVA correspondiente"
+No generes omisiones fiscales por tu cuenta.
+Las omisiones fiscales se detectan automáticamente por el sistema.
 
-DEBES concluir:
-→ El IVA NO está incluido en la renta.
-→ El IVA se cobra adicionalmente.
+No inventes omisiones fiscales. Solo analiza el contrato.
 
-Está PROHIBIDO interpretar "IVA respectivo" como IVA incluido.
+Responde únicamente con información que esté explícitamente mencionada en el contrato.
+No hagas suposiciones ni inferencias fiscales que no aparezcan en el texto.
+Si la información no está presente, indica claramente que no está especificada en el contrato.
 
-La deducibilidad fiscal SÍ es relevante en contratos de arrendamiento,
-particularmente para el arrendatario.
+Si el contrato menciona IVA explícitamente, identifícalo y analízalo.
+No afirmes que no se menciona IVA si aparece en el texto.
 
-No clasifiques como riesgo el hecho de que una parte
-pueda ser persona física o moral.
 
-Solo considera riesgo si genera ambigüedad u obligación fiscal incierta.
-
-No clasifiques como riesgo fiscal la posibilidad genérica
-de incumplimiento de pago.Si el contrato establece "más IVA", NO lo clasifiques como omisión.
-
-El traslado de IVA ("más IVA") NO constituye un riesgo fiscal. 
-Solo clasifícalo como riesgo si existe ambigüedad o contradicción. 
-
-No clasifiques como riesgo la posibilidad genérica de error de cálculo del IVA.
-Evalúa únicamente riesgos derivados del texto contractual.
-
-NO repitas las instrucciones en la respuesta final.
 """
 
+
+# ----------------------------
+# Detectar traslado de IVA
+# ----------------------------
+
+def iva_trasladado(context: str):
+
+    ctx = context.lower()
+
+    patrones = [
+    "más iva",
+    "mas iva",
+    "iva respectivo",
+    "iva correspondiente",
+    "iva adicional",
+    "más el impuesto al valor agregado",
+    "mas el impuesto al valor agregado",
+    "más el iva",
+    "mas el iva"
+]
+
+    return any(p in ctx for p in patrones)
+
+
+
+# ----------------------------
+# Detectar si se menciona IVA
+# ----------------------------
+
+def menciona_iva(context: str):
+
+    ctx = context.lower()
+
+    patrones = [
+        "iva",
+        "impuesto al valor agregado"
+    ]
+
+    return any(p in ctx for p in patrones)
+
+
+# ----------------------------
+# Detectar si la pregunta es sobre IVA
+# ----------------------------
+
+def pregunta_sobre_iva(question: str):
+
+    q = question.lower()
+
+    palabras = [
+        "iva",
+        "impuesto al valor agregado"
+    ]
+
+    return any(p in q for p in palabras)
+
+
+# ----------------------------
 # Detectar omisiones fiscales
+# ----------------------------
+
 def detect_missing_fiscal_clauses(context: str):
+
     ctx = context.lower()
     missing = []
 
-    if "iva" not in ctx:
-        missing.append("No se menciona IVA")
-
+    # CFDI / facturación
     if "cfdi" not in ctx and "factura" not in ctx:
         missing.append("No se menciona CFDI / facturación")
 
-    if "retencion" not in ctx:
+    # Retenciones no mencionadas
+    if "retencion" not in ctx and "retenciones" not in ctx:
         missing.append("No se mencionan retenciones")
+
+    # IVA no mencionado
+    if "iva" not in ctx and "impuesto al valor agregado" not in ctx:
+        missing.append("No se menciona el tratamiento del IVA")
 
     return missing
 
-# Resumen de riesgo fiscal
-def fiscal_risk_summary(text: str):
-    t = text.lower()
 
-    score = 0
-    if "riesgo alto" in t:
-        score += 3
-    if "riesgo medio" in t:
-        score += 2
-    if "riesgo bajo" in t:
-        score += 1
+# ----------------------------
+# Filtrar contexto fiscal
+# ----------------------------
 
-    if score <= 2:
-        return "Riesgo fiscal general: Bajo"
-    elif score <= 5:
-        return "Riesgo fiscal general: Medio"
-    else:
-        return "Riesgo fiscal general: Alto"
-    
-# Función principal del agente
+def filter_fiscal_context(context: str):
+
+    keywords = [
+        "iva",
+        "impuesto",
+        "retencion",
+        "retenciones",
+        "cfdi",
+        "factura",
+        "fiscal"
+    ]
+
+    lines = context.split("\n")
+
+    filtered = [
+        line for line in lines
+        if any(k in line.lower() for k in keywords)
+    ]
+
+    # si hay muy poco contexto fiscal devolvemos todo
+    if len(filtered) < 5:
+        return context
+
+    return "\n".join(filtered)
+
+
+# ----------------------------
+# Agente fiscal
+# ----------------------------
+
 def run_fiscal_agent(question: str, context: str) -> str:
 
-    missing_clauses = detect_missing_fiscal_clauses(context)
+    context = filter_fiscal_context(context)
 
-    user_msg = f"""
-CONTRATO (fragmentos relevantes):
+    MAX_CONTEXT_CHARS = 5000
+
+    if len(context) > MAX_CONTEXT_CHARS:
+        context = context[:MAX_CONTEXT_CHARS]
+
+    missing = detect_missing_fiscal_clauses(context)
+
+    es_pregunta_iva = pregunta_sobre_iva(question)
+
+    # -----------------------------------
+    # Caso claro: IVA trasladado
+    # -----------------------------------
+
+    if iva_trasladado(context) and es_pregunta_iva:
+
+        answer = """
+ANÁLISIS FISCAL
+
+Tratamiento de IVA
+El contrato establece que la renta se paga más el Impuesto al Valor Agregado (IVA).
+
+Interpretación fiscal
+Esto significa que el IVA se traslada adicionalmente al arrendatario.
+
+Conclusión
+El IVA NO está incluido en la renta.
+Se cobra adicionalmente sobre la renta base.
+
+Riesgos fiscales
+No se identifican riesgos fiscales en el tratamiento del IVA.
+"""
+
+    # -----------------------------------
+    # Caso: se menciona IVA pero no es claro
+    # -----------------------------------
+
+    elif menciona_iva(context) and es_pregunta_iva:
+
+        answer = """
+ANÁLISIS FISCAL
+
+El contrato menciona el Impuesto al Valor Agregado (IVA).
+
+Sin embargo, el texto no permite determinar con claridad
+si el IVA está incluido en la renta o si se cobra adicionalmente.
+
+Se requiere revisar la cláusula correspondiente
+para confirmar el tratamiento fiscal del IVA.
+"""
+
+    # -----------------------------------
+    # Caso general → usar LLM
+    # -----------------------------------
+
+    else:
+
+        user_msg = f"""
+CONTRATO (fragmentos fiscales relevantes):
 
 {context}
 
 PREGUNTA DEL USUARIO:
 {question}
-
-Instrucciones:
-1. Identifica implicaciones fiscales relevantes
-2. Detecta riesgos fiscales potenciales
-3. Clasifica riesgos como Alto / Medio / Bajo
-4. Explica impacto fiscal
-5. Cita texto exacto del contrato cuando sea posible
-6. Señala omisiones fiscales relevantes
 """
 
-    resp = client.chat.completions.create(
-        model=CHAT_MODEL,
-        messages=[
-            {"role": "system", "content": FISCAL_SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.1,
-    )
+        resp = client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": FISCAL_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.1,
+        )
 
-    llm_answer = resp.choices[0].message.content or ""
+        answer = resp.choices[0].message.content or ""
 
-    summary = fiscal_risk_summary(llm_answer)
+    # -----------------------------------
+    # Bloque de omisiones
+    # -----------------------------------
 
-    omissions_block = ""
-    if missing_clauses:
-        omissions_block = "\n\n OMISIONES DETECTADAS AUTOMÁTICAMENTE:\n"
-        for m in missing_clauses:
-            omissions_block += f"- {m}\n"
+    omissions = ""
 
-    final_answer = (
-        f"{summary}\n\n"
-        f"{llm_answer}"
-        f"{omissions_block}"
-    )
+    if missing:
 
-    return final_answer
+        omissions = "\n\nOMISIONES DETECTADAS AUTOMÁTICAMENTE:\n"
 
-# Filtrar contexto fiscal
-def filter_fiscal_context(context: str):
-    fiscal_keywords = ["iva", "impuesto", "retencion", "cfdi", "factura"]
-    lines = context.split("\n")
+        for m in missing:
+            omissions += f"- {m}\n"
 
-    filtered = [
-        line for line in lines
-        if any(k in line.lower() for k in fiscal_keywords)
-    ]
-
-    return "\n".join(filtered)
+    return answer + omissions
