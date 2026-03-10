@@ -1,102 +1,322 @@
 from __future__ import annotations
 
+import re
 import pandas as pd
 import plotly.express as px
-import requests
 import streamlit as st
 
-# GeoJSON (cache)
-@st.cache_data
-def load_mexico_geojson():
-    url = "https://raw.githubusercontent.com/angelnmara/geojson/master/mexicoHigh.json"
-    return requests.get(url, timeout=20).json()
+from core.storage_service import StorageService
+from core.pdf_service import PdfService
+from config.settings import SETTINGS
+
 
 class DashboardSection:
 
-    def render(self) -> None:
-        st.markdown("### Dashboard")
+    def __init__(self) -> None:
+        self.storage = StorageService()
+        self.pdf_service = PdfService(self.storage)
 
-        #Datos (demostración, reemplazar con datos reales)
-        df = pd.DataFrame({
-            "state": ["Aguascalientes","Baja California","Baja California Sur","Campeche","Chiapas","Chihuahua","Ciudad de México","Coahuila","Colima","Durango","Guanajuato","Guerrero","Hidalgo","Jalisco","México","Michoacán","Morelos","Nayarit","Nuevo León","Oaxaca","Puebla","Querétaro","Quintana Roo","San Luis Potosí","Sinaloa","Sonora","Tabasco","Tamaulipas","Tlaxcala","Veracruz","Yucatán","Zacatecas"],
-            "count": [4,12,3,2,7,8,18,6,1,3,9,5,4,11,14,6,3,2,13,7,10,5,6,4,8,9,3,5,2,12,4,3]
-        })
+    # ---------------------------------------------------------
+    # Utilidades para extraer métricas de los contratos
+    # ---------------------------------------------------------
 
-        #KPI ROW
-        total = int(df["count"].sum())
-        mx = int(df["count"].max())
-        mn = int(df["count"].min())
-        avg = float(df["count"].mean())
+    def extract_renta(self, text: str):
+        m = re.search(r"\$([\d,]+\.?\d*)", text)
+        if not m:
+            return None
+        val = m.group(1).replace(",", "")
+        try:
+            return float(val)
+        except:
+            return None
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total", f"{total}")
-        c2.metric("Máximo", f"{mx}")
-        c3.metric("Mínimo", f"{mn}")
-        c4.metric("Promedio", f"{avg:.1f}")
-        st.write("")
+    def extract_superficie(self, text: str):
+        m = re.search(r"(\d+)\s*m²", text)
+        if not m:
+            return None
+        return float(m.group(1))
 
-        geo = load_mexico_geojson()
+    def extract_estado(self, text: str):
+        estados = [
+            "Aguascalientes","Baja California","Baja California Sur","Campeche","Chiapas","Chihuahua",
+            "Ciudad de México","Coahuila","Colima","Durango","Guanajuato","Guerrero","Hidalgo",
+            "Jalisco","México","Michoacán","Morelos","Nayarit","Nuevo León","Oaxaca","Puebla",
+            "Querétaro","Quintana Roo","San Luis Potosí","Sinaloa","Sonora","Tabasco","Tamaulipas",
+            "Tlaxcala","Veracruz","Yucatán","Zacatecas"
+        ]
 
-        # Mapa limpio
-        fig = px.choropleth(
-            df,
-            geojson=geo,
-            locations="state",
-            featureidkey="properties.name",
-            color="count",
-            hover_name="state",
-            hover_data={"count": True, "state": False},
-            color_continuous_scale="Sunset",
+        text_low = text.lower()
+
+        for e in estados:
+            if e.lower() in text_low:
+                return e
+
+        return "Desconocido"
+
+    # ---------------------------------------------------------
+    # Construcción del dataset dinámico
+    # ---------------------------------------------------------
+
+    def build_contract_dataframe(self):
+
+        all_pdfs = self.storage.list_all_pdfs()
+
+        rows = []
+
+        for path in all_pdfs:
+
+            text = self.pdf_service.extract_full_pdf_text(path)
+
+            renta = self.extract_renta(text)
+            superficie = self.extract_superficie(text)
+            estado = self.extract_estado(text)
+
+            if renta is None:
+                continue
+
+            precio_m2 = None
+            if superficie:
+                precio_m2 = renta / superficie
+
+            rows.append({
+                "contrato": path,
+                "estado": estado,
+                "renta": renta,
+                "superficie": superficie,
+                "precio_m2": precio_m2
+            })
+
+        if not rows:
+            return pd.DataFrame(columns=[
+                "contrato",
+                "estado",
+                "renta",
+                "superficie",
+                "precio_m2"
+            ])
+
+        return pd.DataFrame(rows)
+
+    # ---------------------------------------------------------
+    # Render principal
+    # ---------------------------------------------------------
+
+    def render(self):
+
+        st.markdown("### Dashboard de contratos")
+
+        df = self.build_contract_dataframe()
+
+        if df.empty:
+            st.warning("No se encontraron datos suficientes en los contratos.")
+            return
+
+        modo = st.radio(
+            "Tipo de comparación",
+            [
+                "Federal",
+                "Por estado",
+                "Por selección"
+            ],
+            horizontal=True
         )
 
-        # Layout minimalista (sin márgenes, fondo transparente)
-        fig.update_geos(
-            fitbounds="locations",
-            visible=False
-        )
-        fig.update_layout(
-            height=560,
-            margin=dict(l=0, r=0, t=0, b=0),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            coloraxis_colorbar=dict(
-                title="",
-                thickness=10,
-                len=0.55,
-                outlinewidth=0,
-                tickfont=dict(size=11),
+        if modo == "Federal":
+            self.render_federal(df)
+
+        elif modo == "Por estado":
+            self.render_estado(df)
+
+        elif modo == "Por selección":
+            self.render_seleccion(df)
+
+    # ---------------------------------------------------------
+    # FEDERAL
+    # ---------------------------------------------------------
+
+    def render_federal(self, df):
+
+        st.markdown("## Comparación Federal")
+
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric("Contratos", len(df))
+        c2.metric("Renta promedio", f"${df['renta'].mean():,.0f}")
+        c3.metric("Superficie promedio", f"{df['superficie'].mean():.0f} m²")
+
+        st.divider()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            fig = px.histogram(
+                df,
+                x="renta",
+                nbins=20,
+                title="Distribución de rentas"
             )
-        )
 
-        # Dashboard layout: Mapa + ranking
-        left, right = st.columns([1.65, 1])
-
-        with left:
             st.plotly_chart(fig, use_container_width=True)
 
-        with right:
-            st.markdown("#### Top 10 estados")
-            top10 = df.sort_values("count", ascending=False).head(10)
+        with col2:
 
-            # Bar chart minimalista (misma escala)
-            bar = px.bar(
-                top10[::-1],  # para que el top esté arriba visualmente
-                x="count",
-                y="state",
-                orientation="h",
-                text="count",
-            )
-            bar.update_traces(
-                textposition="outside",
-                hovertemplate="<b>%{y}</b><br>Conteo: %{x}<extra></extra>"
-            )
-            bar.update_layout(
-                height=560,
-                margin=dict(l=0, r=0, t=10, b=0),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                xaxis=dict(title="", showgrid=False, zeroline=False),
-                yaxis=dict(title="", showgrid=False),
+            fig = px.scatter(
+                df,
+                x="superficie",
+                y="renta",
+                title="Relación renta vs superficie"
             )
 
-            st.plotly_chart(bar, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+
+        col3, col4 = st.columns(2)
+
+        renta_estado = (
+            df.groupby("estado")["renta"]
+            .mean()
+            .reset_index()
+        )
+
+        fig = px.bar(
+            renta_estado,
+            x="estado",
+            y="renta",
+            title="Renta promedio por estado"
+        )
+
+        col3.plotly_chart(fig, use_container_width=True)
+
+        precio_estado = (
+            df.groupby("estado")["precio_m2"]
+            .mean()
+            .reset_index()
+        )
+
+        fig = px.bar(
+            precio_estado,
+            x="estado",
+            y="precio_m2",
+            title="Precio promedio por m² por estado"
+        )
+
+        col4.plotly_chart(fig, use_container_width=True)
+
+    # ---------------------------------------------------------
+    # POR ESTADO
+    # ---------------------------------------------------------
+
+    def render_estado(self, df):
+
+        st.markdown("## Comparación por estado")
+
+        estados = sorted(df["estado"].dropna().unique())
+
+        estado_sel = st.selectbox(
+            "Selecciona un estado",
+            estados
+        )
+
+        df_estado = df[df["estado"] == estado_sel]
+
+        renta_prom_estado = df_estado["renta"].mean()
+        renta_prom_nac = df["renta"].mean()
+
+        col1, col2 = st.columns(2)
+
+        col1.metric(
+            "Renta promedio del estado",
+            f"${renta_prom_estado:,.0f}"
+        )
+
+        col2.metric(
+            "Promedio nacional",
+            f"${renta_prom_nac:,.0f}"
+        )
+
+        st.divider()
+
+        col3, col4 = st.columns(2)
+
+        fig = px.bar(
+            df_estado,
+            x="contrato",
+            y="renta",
+            title="Renta mensual en el estado"
+        )
+
+        col3.plotly_chart(fig, use_container_width=True)
+
+        fig = px.bar(
+            df_estado,
+            x="contrato",
+            y="superficie",
+            title="Tamaño de inmuebles"
+        )
+
+        col4.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+
+        fig = px.bar(
+            df_estado,
+            x="contrato",
+            y="precio_m2",
+            title="Precio por metro cuadrado"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ---------------------------------------------------------
+    # SELECCIÓN
+    # ---------------------------------------------------------
+
+    def render_seleccion(self, df):
+
+        st.markdown("## Comparación por selección")
+
+        contratos = df["contrato"].tolist()
+
+        seleccion = st.multiselect(
+            "Selecciona contratos",
+            contratos
+        )
+
+        if not seleccion:
+            st.info("Selecciona contratos para comparar.")
+            return
+
+        df_sel = df[df["contrato"].isin(seleccion)]
+
+        col1, col2 = st.columns(2)
+
+        fig = px.bar(
+            df_sel,
+            x="contrato",
+            y="renta",
+            title="Comparación de renta"
+        )
+
+        col1.plotly_chart(fig, use_container_width=True)
+
+        fig = px.bar(
+            df_sel,
+            x="contrato",
+            y="superficie",
+            title="Comparación de superficie"
+        )
+
+        col2.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+
+        fig = px.bar(
+            df_sel,
+            x="contrato",
+            y="precio_m2",
+            title="Precio por metro cuadrado"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
