@@ -27,7 +27,7 @@ class AppConfig:
     # -----------------------------
     # Configuración OpenAI
     # -----------------------------
-    OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", "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"))
+    OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
 
     # Modelo de chat
     CHAT_MODEL: str = "gpt-4o-mini"
