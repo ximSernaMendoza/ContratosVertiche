@@ -8,12 +8,14 @@ import streamlit as st
 from core.storage_service import StorageService
 from core.pdf_service import PdfService
 from config.settings import SETTINGS
+from core.auth_service import AuthService
 
 
 class DashboardSection:
 
     def __init__(self) -> None:
-        self.storage = StorageService()
+        self.auth_service = AuthService()
+        self.storage = StorageService(self.auth_service)
         self.pdf_service = PdfService(self.storage)
 
     # ---------------------------------------------------------

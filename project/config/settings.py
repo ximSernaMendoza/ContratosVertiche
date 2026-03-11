@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from openai import OpenAI
 
-@dataclass(frozen=True)
+@dataclass
 class AppConfig:
     # Configuración general de la aplicación
     page_title: str = "Asistente Virtual 2.0 | Vertiche"

@@ -20,7 +20,10 @@ from ui.sections.consulta_section import ConsultaSection
 from ui.sections.subir_section import SubirSection
 from ui.sections.calendario_section import CalendarioSection
 from ui.sections.dashboard_section import DashboardSection
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
 
 class VerticheApp:
     def __init__(self) -> None:
