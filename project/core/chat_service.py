@@ -3,9 +3,11 @@ from __future__ import annotations
 from openai import OpenAI
 from config.settings import SETTINGS
 
+model = SETTINGS.configure_gemini()
 
 class ChatService:
     def __init__(self) -> None:
+        self.model = model
         self.client = OpenAI(base_url=SETTINGS.LMSTUDIO_BASE, api_key=SETTINGS.LMSTUDIO_API_KEY)
 
     def ask_llm_chat(self, question: str, context: str, history: list[dict], max_turns: int = 30) -> str:

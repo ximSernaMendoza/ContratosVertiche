@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
+import google.generativeai as genai
 from typing import List
-
+from langchain_huggingface import HuggingFaceEmbeddings
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -16,11 +17,22 @@ class AppConfig:
     BUCKET_NAME: str = "contratos"
 
     # Configuración de LM Studio
-    LMSTUDIO_BASE: str = "http://127.0.0.1:1234/v1"
-    EMBED_MODEL: str = "text-embedding-nomic-embed-text-v1.5"
-    CHAT_MODEL: str = "meta-llama-3.1-8b-instruct"
+    #LMSTUDIO_BASE: str = "http://127.0.0.1:1234/v1"
+    #EMBED_MODEL: str = "text-embedding-nomic-embed-text-v1.5"
+    #CHAT_MODEL: str = "meta-llama-3.1-8b-instruct"
     
     LMSTUDIO_API_KEY: str = "lm-studio"
+    
+    GOOGLE_API_KEY: str = "AIzaSyANQuGy22WH0rBUI0PNEWdYqrTqR6CjCmI"
+
+    genai.configure(api_key=GOOGLE_API_KEY)
+    
+    genai.GenerativeModel("gemini-1.5-flash")
+
+    EMBEDDINGS_MODEL: str = "all-MiniLM-L6-v2"
+
+    embeddings = HuggingFaceEmbeddings(model_name= EMBEDDINGS_MODEL)
+
 
     max_pages: int = 60
     chunk_chars: int = 1200
