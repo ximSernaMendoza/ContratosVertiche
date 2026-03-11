@@ -1,6 +1,9 @@
+from __future__ import annotations
+
+import os
 from dataclasses import dataclass, field
 import google.generativeai as genai
-from typing import List
+from typing import List, Optional
 from langchain_huggingface import HuggingFaceEmbeddings
 
 @dataclass(frozen=True)
@@ -20,20 +23,22 @@ class AppConfig:
     #LMSTUDIO_BASE: str = "http://127.0.0.1:1234/v1"
     #EMBED_MODEL: str = "text-embedding-nomic-embed-text-v1.5"
     #CHAT_MODEL: str = "meta-llama-3.1-8b-instruct"
-    
-    LMSTUDIO_API_KEY: str = "lm-studio"
-    
-    GOOGLE_API_KEY: str = "AIzaSyANQuGy22WH0rBUI0PNEWdYqrTqR6CjCmI"
+    #LMSTUDIO_API_KEY: str = "lm-studio"
+ 
+    # -----------------------------
+    # Configuración Gemini
+    # -----------------------------
+    GOOGLE_API_KEY: str = field(default_factory=lambda: os.getenv("GOOGLE_API_KEY", "AIzaSyANQuGy22WH0rBUI0PNEWdYqrTqR6CjCmI"))
+    GEMINI_MODEL: str = "gemini-1.5-flash"
 
-    genai.configure(api_key=GOOGLE_API_KEY)
-    
-    genai.GenerativeModel("gemini-1.5-flash")
+    # -----------------------------
+    # Configuración embeddings para RAG
+    # -----------------------------
+    EMBEDDINGS_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
 
-    EMBEDDINGS_MODEL: str = "all-MiniLM-L6-v2"
-
-    embeddings = HuggingFaceEmbeddings(model_name= EMBEDDINGS_MODEL)
-
-
+    # -----------------------------
+    # Parámetros RAG
+    # -----------------------------
     max_pages: int = 60
     chunk_chars: int = 1200
     overlap: int = 200
@@ -53,6 +58,36 @@ class AppConfig:
         {"id": "C-002", "title": "Arrendamiento Bodega Monterrey", "state": "Nuevo León", "expiry": "2026-04-02"},
         {"id": "C-003", "title": "Arrendamiento Oficina Guadalajara", "state": "Jalisco", "expiry": "2026-03-28"},
     ])
+
+    # cachés internos
+    _gemini_model_instance: Optional[object] = field(default=None, init=False, repr=False)
+    _embeddings_instance: Optional[HuggingFaceEmbeddings] = field(default=None, init=False, repr=False)
+
+    def configure_gemini(self):
+        """
+        Inicializa y devuelve el modelo Gemini.
+        """
+        if not self.GOOGLE_API_KEY:
+            raise ValueError(
+                "No se encontró GOOGLE_API_KEY. "
+                "Define la variable de entorno GOOGLE_API_KEY antes de ejecutar la app."
+            )
+
+        if self._gemini_model_instance is None:
+            genai.configure(api_key=self.GOOGLE_API_KEY)
+            self._gemini_model_instance = genai.GenerativeModel(self.GEMINI_MODEL)
+
+        return self._gemini_model_instance
+
+    def get_embeddings(self) -> HuggingFaceEmbeddings:
+        """
+        Devuelve el modelo de embeddings local para el RAG.
+        """
+        if self._embeddings_instance is None:
+            self._embeddings_instance = HuggingFaceEmbeddings(
+                model_name=self.EMBEDDINGS_MODEL
+            )
+        return self._embeddings_instance
 
 
 SETTINGS = AppConfig()
