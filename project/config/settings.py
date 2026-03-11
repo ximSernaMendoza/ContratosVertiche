@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-import google.generativeai as genai
 from typing import List, Optional
-from langchain_huggingface import HuggingFaceEmbeddings
+from openai import OpenAI
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -26,15 +25,15 @@ class AppConfig:
     #LMSTUDIO_API_KEY: str = "lm-studio"
  
     # -----------------------------
-    # Configuración Gemini
+    # Configuración OpenAI
     # -----------------------------
-    GOOGLE_API_KEY: str = field(default_factory=lambda: os.getenv("GOOGLE_API_KEY", "AIzaSyANQuGy22WH0rBUI0PNEWdYqrTqR6CjCmI"))
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", "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"))
 
-    # -----------------------------
-    # Configuración embeddings para RAG
-    # -----------------------------
-    EMBEDDINGS_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # Modelo de chat
+    CHAT_MODEL: str = "gpt-4o-mini"
+
+    # Modelo de embeddings para RAG
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # -----------------------------
     # Parámetros RAG
@@ -59,35 +58,19 @@ class AppConfig:
         {"id": "C-003", "title": "Arrendamiento Oficina Guadalajara", "state": "Jalisco", "expiry": "2026-03-28"},
     ])
 
-    # cachés internos
-    _gemini_model_instance: Optional[object] = field(default=None, init=False, repr=False)
-    _embeddings_instance: Optional[HuggingFaceEmbeddings] = field(default=None, init=False, repr=False)
+    _openai_client: Optional[OpenAI] = field(default=None, init=False, repr=False)
 
-    def configure_gemini(self):
-        """
-        Inicializa y devuelve el modelo Gemini.
-        """
-        if not self.GOOGLE_API_KEY:
+    def get_openai_client(self) -> OpenAI:
+        if not self.OPENAI_API_KEY:
             raise ValueError(
-                "No se encontró GOOGLE_API_KEY. "
-                "Define la variable de entorno GOOGLE_API_KEY antes de ejecutar la app."
+                "No se encontró OPENAI_API_KEY. "
+                "Define la variable de entorno OPENAI_API_KEY antes de ejecutar la app."
             )
 
-        if self._gemini_model_instance is None:
-            genai.configure(api_key=self.GOOGLE_API_KEY)
-            self._gemini_model_instance = genai.GenerativeModel(self.GEMINI_MODEL)
+        if self._openai_client is None:
+            self._openai_client = OpenAI(api_key=self.OPENAI_API_KEY)
 
-        return self._gemini_model_instance
-
-    def get_embeddings(self) -> HuggingFaceEmbeddings:
-        """
-        Devuelve el modelo de embeddings local para el RAG.
-        """
-        if self._embeddings_instance is None:
-            self._embeddings_instance = HuggingFaceEmbeddings(
-                model_name=self.EMBEDDINGS_MODEL
-            )
-        return self._embeddings_instance
+        return self._openai_client
 
 
 SETTINGS = AppConfig()

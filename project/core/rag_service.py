@@ -14,22 +14,31 @@ from core.pdf_service import PdfService
 class RagService:
     def __init__(self, pdf_service: PdfService) -> None:
         self.pdf_service = pdf_service
-        self.embedder = SETTINGS.get_embeddings()
+        self.client = SETTINGS.get_openai_client()
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Embeddings para documentos/chunks.
         """
-        vectors = self.embedder.embed_documents(texts)
-        return np.array(vectors, dtype=np.float32)
+        if not texts:
+            return np.zeros((0, 1), dtype=np.float32)
 
+        resp = self.client.embeddings.create(
+            model=SETTINGS.EMBEDDING_MODEL,
+            input=texts,
+        )
+        return np.array([d.embedding for d in resp.data], dtype=np.float32)
+    
     def embed_query(self, text: str) -> np.ndarray:
         """
         Embedding específico para la pregunta.
         """
-        vector = self.embedder.embed_query(text)
-        return np.array([vector], dtype=np.float32)
-
+        resp = self.client.embeddings.create(
+            model=SETTINGS.EMBEDDING_MODEL,
+            input=[text],
+        )
+        return np.array([resp.data[0].embedding], dtype=np.float32)
+    
     @staticmethod
     def cosine_sim_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         a_norm = a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-9)
