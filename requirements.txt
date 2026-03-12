@@ -1,3 +1,4 @@
+PyMuPDF>=1.23.0
 supabase
 openai>=1.0.0
 streamlit>=1.32
