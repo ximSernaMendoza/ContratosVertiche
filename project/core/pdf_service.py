@@ -60,11 +60,11 @@ class PdfService:
             return True
 
         text = text.strip()
-        if len(text) < 140:
+        if len(text) < 160:
             return True
 
         tokens = re.findall(r"\w+", text)
-        if len(tokens) < 30:
+        if len(tokens) < 35:
             return True
 
         return False
@@ -85,7 +85,7 @@ class PdfService:
     # OCR helpers
     # ---------------------------------------------------------
     @staticmethod
-    def _page_to_pil_image(page: fitz.Page, zoom: float = 1.8) -> Image.Image:
+    def _page_to_pil_image(page: fitz.Page, zoom: float = 2.2) -> Image.Image:
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat, alpha=False)
         return Image.open(io.BytesIO(pix.tobytes("png")))
@@ -95,8 +95,13 @@ class PdfService:
         img = img.convert("L")
         img = ImageOps.autocontrast(img)
         img = img.filter(ImageFilter.SHARPEN)
-        img = img.point(lambda x: 255 if x > 170 else 0)
-        img = ImageOps.expand(img, border=8, fill=255)
+
+        # binarización un poco más suave para no perder caracteres finos
+        img = img.point(lambda x: 255 if x > 165 else 0)
+
+        # borde blanco para evitar recortes
+        img = ImageOps.expand(img, border=10, fill=255)
+
         return img
 
     def _ocr_page(self, page: fitz.Page) -> str:
@@ -106,11 +111,11 @@ class PdfService:
         try:
             import pytesseract
 
-            img = self._page_to_pil_image(page, zoom=1.8)
+            img = self._page_to_pil_image(page, zoom=2.2)
             img = self._preprocess_for_ocr(img)
 
             candidates = []
-            for psm in ("6", "4"):
+            for psm in ("6", "4", "11"):
                 try:
                     txt = pytesseract.image_to_string(
                         img,
@@ -125,27 +130,32 @@ class PdfService:
             if not candidates:
                 return ""
 
-            return max(candidates, key=len)
+            # elegir el texto más rico
+            best = max(candidates, key=len)
+            return best
 
         except Exception:
             return ""
 
     # ---------------------------------------------------------
-    # Heurística de velocidad
+    # Heurística de velocidad / profundidad
     # ---------------------------------------------------------
     def _max_pages_for_dashboard(self, path: str, max_pages: int) -> int:
         base = os.path.basename(path).lower()
 
+        # contratos tipo T: normalmente los más escaneados/problemáticos
         if base.startswith("t"):
+            return min(max_pages, 5)
+
+        # contratos avanzados suelen traer datos importantes al inicio
+        if "avanzado" in base:
             return min(max_pages, 4)
 
-        if "avanzado" in base:
-            return min(max_pages, 3)
-
+        # contratos C01, C02 o que contienen "contrato"
         if "contrato" in base or re.match(r"^c\d+", base):
-            return min(max_pages, 3)
+            return min(max_pages, 4)
 
-        return min(max_pages, 2)
+        return min(max_pages, 3)
 
     def _should_force_ocr(self, path: str) -> bool:
         base = os.path.basename(path).lower()
@@ -169,9 +179,11 @@ class PdfService:
 
             text_final = text_normal
 
-            # OCR solo cuando de verdad vale la pena
+            # OCR si es T... o si el texto normal es pobre
             if force_ocr or self._is_sparse_text(text_normal):
                 ocr_text = self._ocr_page(page)
+
+                # nos quedamos con el más útil
                 if len(ocr_text) > len(text_normal):
                     text_final = self.clean_text(ocr_text)
 
@@ -183,7 +195,7 @@ class PdfService:
     # ---------------------------------------------------------
     # Extracción completa
     # ---------------------------------------------------------
-    def extract_full_pdf_text(self, path: str, max_pages: int = 4) -> str:
+    def extract_full_pdf_text(self, path: str, max_pages: int = 5) -> str:
         try:
             pdf_bytes = self.storage.download(path)
             pages = self.pdf_bytes_to_pages(pdf_bytes, path=path, max_pages=max_pages)
