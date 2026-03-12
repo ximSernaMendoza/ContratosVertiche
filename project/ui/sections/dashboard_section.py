@@ -5,7 +5,7 @@ import re
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
+from pathlib import Path
 from core.auth_service import AuthService
 from core.storage_service import StorageService
 from core.pdf_service import PdfService
@@ -184,24 +184,44 @@ class DashboardSection:
     # Overrides manuales: solo rellenar vacíos, nunca reemplazar
     # ---------------------------------------------------------
     def _apply_manual_overrides(self, df: pd.DataFrame) -> pd.DataFrame:
-        path = "manual_overrides.csv"
+        """
+        Aplica overrides manuales desde project/manual_overrides.csv.
+
+        Regla:
+        - Solo rellena vacíos del dataframe extraído.
+        - Nunca reemplaza datos ya detectados.
+        """
 
         if df is None or df.empty:
             return df
 
-        if not os.path.exists(path):
+        # dashboard_section.py -> project/ui/sections/dashboard_section.py
+        # parents[2] -> project/
+        base_dir = Path(__file__).resolve().parents[2]
+        path = base_dir / "manual_overrides.csv"
+
+        if not path.exists():
             return df
 
         try:
             overrides = pd.read_csv(path)
         except Exception as e:
-            st.warning(f"No se pudo leer manual_overrides.csv: {e}")
+            st.warning(f"No se pudo leer el archivo manual_overrides.csv: {e}")
             return df
 
-        if overrides.empty or "nombre_archivo" not in overrides.columns:
+        if overrides.empty:
             return df
 
-        merged = df.merge(overrides, on="nombre_archivo", how="left", suffixes=("", "_manual"))
+        if "nombre_archivo" not in overrides.columns:
+            st.warning("manual_overrides.csv no contiene la columna obligatoria 'nombre_archivo'.")
+            return df
+
+        merged = df.merge(
+            overrides,
+            on="nombre_archivo",
+            how="left",
+            suffixes=("", "_manual")
+        )
 
         campos = [
             "renta_mensual",
@@ -216,8 +236,10 @@ class DashboardSection:
 
         for campo in campos:
             manual_col = f"{campo}_manual"
+
             if campo in merged.columns and manual_col in merged.columns:
-                # Mantiene el dato extraído si existe; solo rellena vacíos
+                # Mantiene el valor detectado si ya existe.
+                # Solo rellena cuando el valor original está vacío.
                 merged[campo] = merged[campo].combine_first(merged[manual_col])
 
         cols_finales = [c for c in merged.columns if not c.endswith("_manual")]
@@ -280,11 +302,11 @@ class DashboardSection:
                 text=title,
                 x=0.02,
                 xanchor="left",
-                font=dict(size=18, color="#2E2E2E", family="Arial Black")
+                font=dict(size=18, color="#FFF7F3", family="Arial Black")
             ),
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-            font=dict(color="#2E2E2E", size=13),
+            paper_bgcolor="rgba(15,16,25,0.92)",
+            plot_bgcolor="rgba(15,16,25,0.92)",
+            font=dict(color="#F8EDE8", size=13),
             margin=dict(l=20, r=20, t=60, b=30),
             legend=dict(
                 orientation="h",
@@ -298,17 +320,17 @@ class DashboardSection:
 
         fig.update_xaxes(
             showgrid=True,
-            gridcolor="rgba(0,0,0,0.08)",
+            gridcolor="rgba(255,255,255,0.08)",
             zeroline=False,
             showline=False,
-            tickfont=dict(color="#2E2E2E")
+            tickfont=dict(color="#F6E9E2")
         )
         fig.update_yaxes(
             showgrid=True,
-            gridcolor="rgba(0,0,0,0.08)",
+            gridcolor="rgba(255,255,255,0.08)",
             zeroline=False,
             showline=False,
-            tickfont=dict(color="#2E2E2E")
+            tickfont=dict(color="#F6E9E2")
         )
 
         return fig
