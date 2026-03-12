@@ -3,48 +3,70 @@ from __future__ import annotations
 from openai import OpenAI
 from config.settings import SETTINGS
 
-
 class ChatService:
     def __init__(self) -> None:
-        self.client = OpenAI(base_url=SETTINGS.LMSTUDIO_BASE, api_key=SETTINGS.LMSTUDIO_API_KEY)
+        self.client = SETTINGS.get_openai_client()
 
-    def ask_llm_chat(self, question: str, context: str, history: list[dict], max_turns: int = 30) -> str:
-        """
-        history: lista de dicts {"role": "user"|"bot", "text": "..."} guardada en session_state
-        max_turns: cuántos mensajes previos (pares user/bot) usar como memoria corta
-        """
-
-        # tomar solo los últimos mensajes (memoria corta)
+    @staticmethod
+    def _history_to_messages(history: list[dict], max_turns: int = 30) -> list[dict]:
         recent = history[-max_turns:] if len(history) > max_turns else history
+        messages = []
 
+        for m in recent:
+            role = m.get("role", "")
+            text = (m.get("text", "") or "").strip()
+
+            if not text:
+                continue
+
+            if role == "user":
+                messages.append({"role": "user", "content": text})
+            elif role in ("bot", "assistant"):
+                messages.append({"role": "assistant", "content": text})
+
+        return messages
+
+
+    def ask_llm_chat(
+        self,
+        question: str,
+        context: str,
+        history: list[dict],
+        max_turns: int = 30,
+    ) -> str:
+        """
+        Respuesta de chat usando GPT-4o-mini.
+        Si hay contexto RAG, lo usa.
+        Si no hay contexto, responde como chat general del asistente.
+        """
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "Eres un asistente especializado en análisis de contratos.\n"
-                    "Responde usando el CONTEXTO recuperado del RAG. Si falta información, di 'No especificado en contrato'.\n"
-                    "Sé claro, con bullets si ayuda."
+                    "Eres un asistente especializado en análisis de contratos. "
+                    "Responde en español. "
+                    "Usa prioritariamente el contexto recuperado del RAG cuando exista. "
+                    "Si el usuario pide un dato específico y no aparece en el contexto, responde exactamente: "
+                    "'No especificado en contrato'. "
+                    "No inventes cláusulas, montos, fechas ni obligaciones. "
+                    "Sé claro, profesional y estructurado."
                 ),
             }
         ]
 
-        # historial (sin contexto viejo)
-        for m in recent:
-            r = m.get("role", "")
-            if r == "user":
-                messages.append({"role": "user", "content": m.get("text", "")})
-            elif r == "bot":
-                messages.append({"role": "assistant", "content": m.get("text", "")})
+        messages.extend(self._history_to_messages(history, max_turns=max_turns))
 
-        # mensaje actual con contexto
-        messages.append({
-            "role": "user",
-            "content": f"CONTEXTO (RAG):\n{context}\n\nPREGUNTA:\n{question}"
-        })
+        user_prompt = (
+            f"CONTEXTO RAG:\n{context if context else 'Sin contexto recuperado.'}\n\n"
+            f"PREGUNTA DEL USUARIO:\n{question}"
+        )
+
+        messages.append({"role": "user", "content": user_prompt})
 
         resp = self.client.chat.completions.create(
             model=SETTINGS.CHAT_MODEL,
             messages=messages,
             temperature=0.2,
         )
+
         return (resp.choices[0].message.content or "").strip()

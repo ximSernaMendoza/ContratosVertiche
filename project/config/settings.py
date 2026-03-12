@@ -1,8 +1,11 @@
+from __future__ import annotations
+
+import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
+from openai import OpenAI
 
-
-@dataclass(frozen=True)
+@dataclass
 class AppConfig:
     # Configuración general de la aplicación
     page_title: str = "Asistente Virtual 2.0 | Vertiche"
@@ -16,12 +19,25 @@ class AppConfig:
     BUCKET_NAME: str = "contratos"
 
     # Configuración de LM Studio
-    LMSTUDIO_BASE: str = "http://127.0.0.1:1234/v1"
-    EMBED_MODEL: str = "text-embedding-nomic-embed-text-v1.5"
-    CHAT_MODEL: str = "meta-llama-3.1-8b-instruct"
-    
-    LMSTUDIO_API_KEY: str = "lm-studio"
+    #LMSTUDIO_BASE: str = "http://127.0.0.1:1234/v1"
+    #EMBED_MODEL: str = "text-embedding-nomic-embed-text-v1.5"
+    #CHAT_MODEL: str = "meta-llama-3.1-8b-instruct"
+    #LMSTUDIO_API_KEY: str = "lm-studio"
+ 
+    # -----------------------------
+    # Configuración OpenAI
+    # -----------------------------
+    OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", "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"))
 
+    # Modelo de chat
+    CHAT_MODEL: str = "gpt-4o-mini"
+
+    # Modelo de embeddings para RAG
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    # -----------------------------
+    # Parámetros RAG
+    # -----------------------------
     max_pages: int = 60
     chunk_chars: int = 1200
     overlap: int = 200
@@ -41,6 +57,20 @@ class AppConfig:
         {"id": "C-002", "title": "Arrendamiento Bodega Monterrey", "state": "Nuevo León", "expiry": "2026-04-02"},
         {"id": "C-003", "title": "Arrendamiento Oficina Guadalajara", "state": "Jalisco", "expiry": "2026-03-28"},
     ])
+
+    _openai_client: Optional[OpenAI] = field(default=None, init=False, repr=False)
+
+    def get_openai_client(self) -> OpenAI:
+        if not self.OPENAI_API_KEY:
+            raise ValueError(
+                "No se encontró OPENAI_API_KEY. "
+                "Define la variable de entorno OPENAI_API_KEY antes de ejecutar la app."
+            )
+
+        if self._openai_client is None:
+            self._openai_client = OpenAI(api_key=self.OPENAI_API_KEY)
+
+        return self._openai_client
 
 
 SETTINGS = AppConfig()

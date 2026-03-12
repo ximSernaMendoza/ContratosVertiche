@@ -1,143 +1,31 @@
 from openai import OpenAI
-import json
+from config.settings import SETTINGS
 
-LMSTUDIO_BASE = "http://127.0.1:1234/v1"
-CHAT_MODEL = "meta-llama-3.1-8b-instruct"
+client = SETTINGS.get_openai_client()
 
-client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
 OPS_SYSTEM_PROMPT = """
-Eres un Asistente Operacional especializado en análisis de control operativo de contratos de arrendamiento inmobiliario.
+Eres un asistente experto en análisis operativo de contratos de arrendamiento.
 
-Tu función es evaluar EXCLUSIVAMENTE los riesgos y obligaciones operativas del contrato.
+Tu tarea es identificar riesgos operativos en contratos comerciales.
 
-NO hagas análisis legales generales ni financieros profundos.
-NO inventes información.
-Si un elemento no está presente, indica explícitamente: "No especificado en contrato".
+Reglas estrictas:
+- Extrae únicamente información explícita del contrato.
+- No inventes ni infieras datos.
+- Si algo no aparece en el contrato indica: "No especificado en contrato".
+- Siempre menciona la cláusula cuando sea posible.
 
-Debes analizar el contrato considerando las siguientes dimensiones operativas:
+Responde en español utilizando texto claro, párrafos y listas.
 
-1️) SLA y Niveles de Servicio
-- Disponibilidad
-- Tiempo de respuesta
-- Tiempo de resolución
-- Penalidades por incumplimiento
-- Créditos de servicio
-- Métricas/KPIs medibles
-- Criterios de aceptación
-
-2️) Entregables y Alcance
-- Qué está incluido
-- Qué está explícitamente excluido
-- Riesgo de "scope creep"
-- Ambigüedades en alcance
-
-3️) Gestión del Cambio
-- Procedimiento de aprobación
-- Impacto en costos
-- Impacto en plazos
-- Facultades unilaterales
-
-4️) Soporte y Niveles de Atención
-- Nivel 1, 2, 3
-- Horarios de soporte
-- Soporte 24/7 o limitado
-- Tiempos garantizados
-
-5️) Mantenimiento y Operación
-- Preventivo
-- Correctivo
-- Responsabilidad HVAC
-- Responsabilidad eléctrica
-- Estructural
-- Servicios (agua, luz, gas)
-- Seguros obligatorios
-
-6️) Seguridad y Logística
-- Accesos y credenciales
-- CCTV
-- Seguridad privada
-- Horarios de operación
-- Restricciones de carga/descarga
-- Aparcamiento
-
-7️) Construcción y Permisos
-- Licencias
-- Ventanas de obra
-- Penalizaciones por retraso
-- Coordinación con administración
-
-8️) Penalidades Operativas
-- Multas
-- Rescisión por incumplimiento operativo
-- Cláusulas ambiguas
-
-Para cada punto debes:
-
-- Identificar la cláusula relevante
-- Resumir el impacto operativo
-- Evaluar nivel de riesgo (Bajo / Medio / Alto / Crítico)
-- Detectar ambigüedad
-- Indicar posibles costos ocultos
-- Evaluar las obligaciones de mantenimiento, quién paga los servicios, los seguros obligatorios, el acondicionamiento, la entrega de la propiedad y las condiciones de devolución. 
-- Analizar las obligaciones operativas, los usos permitidos y las restricciones, así como las obligaciones operativas en determinados momentos. 
-- Advertir sobre el impacto operativo, los altos costos ocultos y el riesgo de multas.
-
----------------------------------------------------------
-FORMATO DE SALIDA (OBLIGATORIO JSON VÁLIDO)
----------------------------------------------------------
-
-Devuelve ÚNICAMENTE un JSON válido con la siguiente estructura:
-
-{
-  "operational_analysis": {
-    "sla": [
-      {
-        "metric": "",
-        "value": "",
-        "penalty": "",
-        "acceptance_criteria": "",
-        "risk_level": "",
-        "evidence": ""
-      }
-    ],
-    "deliverables_scope": [
-      {
-        "included": "",
-        "excluded": "",
-        "scope_creep_risk": "",
-        "ambiguity_detected": "",
-        "risk_level": "",
-        "evidence": ""
-      }
-    ],
-    "change_management": [],
-    "support_levels": [],
-    "maintenance": [],
-    "security_logistics": [],
-    "construction_permits": [],
-    "operational_penalties": [],
-    "overall_operational_risk": "",
-    "hidden_cost_flags": [],
-    "critical_alerts": []
-  }
-}
-
-Si alguna categoría no aparece en el contrato:
-→ Devuelve arreglo vacío [].
-
-No incluyas texto fuera del JSON.
-No incluyas comentarios.
-No incluyas explicación adicional.
--------------------------------------
+No devuelvas JSON.
 """
 
+
 def run_ops_agent(question: str, context: str) -> str:
-    """
-    Agente Operativo (Extractor):
-    - Lee el contexto RAG (fragmentos del contrato)
-    - Devuelve SOLO JSON con contract_json + evidence + missing_fields
-    """
+
+    MAX_CONTEXT_CHARS = 15000
+    context = context[:MAX_CONTEXT_CHARS]
+
     user_msg = f"""
 CONTRATO (fragmentos relevantes):
 
@@ -146,25 +34,85 @@ CONTRATO (fragmentos relevantes):
 PREGUNTA DEL USUARIO:
 {question}
 
-Instrucciones:
-1. Revisa cuidadosamente todo el documento.
-2. Extrae únicamente información relacionada con control operativo.
-3. No realices análisis legales generales ni financieros profundos.
-4. No infieras información que no esté explícitamente en el contrato.
-5. Si un elemento no está definido, indica: "No especificado en contrato".
-6. Identifica la cláusula o sección que respalda cada hallazgo (incluye fragmento textual breve como evidencia).
-7. Evalúa el nivel de riesgo operativo (Bajo / Medio / Alto / Crítico).
-8. Detecta ambigüedades contractuales que puedan generar disputas operativas.
-9. Identifica posibles costos ocultos.
-10. Determina si existen penalidades operativas que puedan impactar la continuidad del negocio.
 
+PROCESO DE ANÁLISIS (SIGUE ESTOS PASOS):
+
+PASO 1 — Identificación de cláusulas
+Revisa cuidadosamente el contrato e identifica todas las cláusulas relevantes.
+
+PASO 2 — Extracción de información
+Busca información operativa relacionada con:
+
+- entrega del inmueble
+- uso permitido del inmueble
+- restricciones de uso
+- modificaciones al inmueble
+- subarrendamiento o traspaso
+- mantenimiento del inmueble
+- composturas o reparaciones
+- pago de servicios (agua, luz, teléfono)
+- depósitos en garantía
+- intereses moratorios
+- penalidades económicas
+- pena convencional
+- rescisión por incumplimiento
+- obligación de desocupar el inmueble
+- permisos o uso de suelo
+
+PASO 3 — Identificación de riesgos operativos
+
+Detecta riesgos como:
+
+- pérdida del depósito
+- penalidades económicas
+- rescisión del contrato
+- obligaciones de reparación
+- restricciones de uso del inmueble
+- costos ocultos
+
+
+BUSCA ESPECÍFICAMENTE PALABRAS CLAVE COMO:
+
+- composturas
+- arreglos
+- reparaciones
+- mantenimiento
+- subarrendar
+- traspasar
+- ceder
+- penalidad
+- pena convencional
+- interés moratorio
+- rescisión
+- desocupar
+
+
+REGLAS IMPORTANTES:
+
+- Analiza únicamente lo que aparece explícitamente en el contrato.
+- No inventes datos.
+- Si algo no aparece escribe: "No especificado en contrato".
+- Incluye siempre la referencia de la cláusula cuando sea posible.
+- Si una cláusula menciona reparaciones o composturas clasifícala como mantenimiento.
+- Si menciona subarrendar o traspasar clasifícala como restricción operativa.
+- Si menciona intereses por retraso clasifícalo como interés moratorio.
+
+
+FORMATO DE RESPUESTA:
+
+1 Cláusulas relevantes  
+2 Penalidades económicas identificadas  
+3 Riesgos operativos detectados  
+4 Conclusión operativa del contrato
 """
+
     resp = client.chat.completions.create(
-        model=CHAT_MODEL,
+        model=SETTINGS.CHAT_MODEL,
         messages=[
             {"role": "system", "content": OPS_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
-        temperature=0.1,
+        temperature=0
     )
+
     return resp.choices[0].message.content or ""
