@@ -21,9 +21,11 @@ from ui.sections.subir_section import SubirSection
 from ui.sections.calendario_section import CalendarioSection
 from ui.sections.dashboard_section import DashboardSection
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 
-load_dotenv()
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(env_path)
 
 class VerticheApp:
     def __init__(self) -> None:

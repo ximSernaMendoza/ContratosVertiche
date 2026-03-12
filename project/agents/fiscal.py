@@ -1,9 +1,10 @@
 from openai import OpenAI
+from config.settings import SETTINGS
 
-LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
-CHAT_MODEL = "meta-llama-3.1-8b-instruct"
+#LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
+#CHAT_MODEL = "meta-llama-3.1-8b-instruct"
 
-client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
+client = SETTINGS.get_openai_client()
 
 
 FISCAL_SYSTEM_PROMPT = """

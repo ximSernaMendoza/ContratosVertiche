@@ -4,7 +4,7 @@ from agents.fiscal import run_fiscal_agent
 # cuando tengan sus agente, los importan amigos :)
 # from agents.tax_mx import run_tax_agent
 from agents.finance_agent import run_financial_agent
-# from agents.ops import run_ops_agent
+from agents.ops import run_ops_agent
 
 #Este es en lo que ponen sus demás agentes jiji
 def _stub_agent(nombre: str):
@@ -15,7 +15,7 @@ def _stub_agent(nombre: str):
 
 # Stubs temporales para que no truene mientras no están listos
 run_tax_agent = _stub_agent("Fiscal")
-run_ops_agent = _stub_agent("Operaciones")
+#run_ops_agent = _stub_agent("Operaciones")
 run_tax_agent = run_fiscal_agent
 
 
