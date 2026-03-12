@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 from openai import OpenAI
+from dotenv import load_dotenv
+load_dotenv()
 
 @dataclass
 class AppConfig:
@@ -14,8 +16,8 @@ class AppConfig:
     initial_sidebar_state: str = "expanded"
 
     # Configuración de Supabase
-    SUPABASE_URL: str = "https://lvthchgaspfbuybtrkoe.supabase.co"
-    SUPABASE_KEY: str = "sb_secret_Uft6Yv-x6Wf3j7_T5BjniQ_6Bzj-dUC"
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL ")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY")
     BUCKET_NAME: str = "contratos"
 
     # Configuración de LM Studio
@@ -27,7 +29,8 @@ class AppConfig:
     # -----------------------------
     # Configuración OpenAI
     # -----------------------------
-    OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", "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"))
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
+
 
     # Modelo de chat
     CHAT_MODEL: str = "gpt-4o-mini"
