@@ -27,6 +27,5 @@ numpy>=1.26
 pydantic>=2.7
 
 tesseract-ocr
-tesseract-ocr-spa
 pytesseract
 pillow
