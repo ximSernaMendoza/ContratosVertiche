@@ -42,7 +42,7 @@ class DashboardSection:
             self.pdf_service = PdfService(self.storage)
 
         if self.metrics_service is None:
-            self.metrics_service =DashboardExtractionService(
+            self.metrics_service = DashboardExtractionService(
                 storage=self.storage,
                 pdf_service=self.pdf_service
             )
@@ -70,7 +70,6 @@ class DashboardSection:
         if no_ext in self.estados_mexico:
             return True
 
-        # caso tipo carpeta/estado/nombre_estado.pdf
         full = self._normalize_name(path)
         for estado in self.estados_mexico:
             if full.endswith(f"/{estado}.pdf"):
@@ -118,15 +117,12 @@ class DashboardSection:
         for path in paths:
             norm = self._normalize_name(path)
 
-            # excluir códigos estatales
             if self._is_state_code_pdf(path):
                 continue
 
-            # excluir federal
             if self._is_federal_code_pdf(path):
                 continue
 
-            # excluir cualquier PDF que huela a código civil
             if (
                 "codigo civil" in norm
                 or "codigo_civil" in norm
@@ -134,7 +130,6 @@ class DashboardSection:
             ):
                 continue
 
-            # incluir solo contratos reales
             if self._looks_like_contract_pdf(path):
                 contracts.append(path)
 
@@ -186,6 +181,49 @@ class DashboardSection:
         return _self.metrics_service.build_dashboard_dataframe(contract_pdfs)
 
     # ---------------------------------------------------------
+    # Overrides manuales: solo rellenar vacíos, nunca reemplazar
+    # ---------------------------------------------------------
+    def _apply_manual_overrides(self, df: pd.DataFrame) -> pd.DataFrame:
+        path = "manual_overrides.csv"
+
+        if df is None or df.empty:
+            return df
+
+        if not os.path.exists(path):
+            return df
+
+        try:
+            overrides = pd.read_csv(path)
+        except Exception as e:
+            st.warning(f"No se pudo leer manual_overrides.csv: {e}")
+            return df
+
+        if overrides.empty or "nombre_archivo" not in overrides.columns:
+            return df
+
+        merged = df.merge(overrides, on="nombre_archivo", how="left", suffixes=("", "_manual"))
+
+        campos = [
+            "renta_mensual",
+            "deposito",
+            "superficie_m2",
+            "estado",
+            "ciudad",
+            "fecha_inicio",
+            "fecha_fin",
+            "meses_vigencia",
+        ]
+
+        for campo in campos:
+            manual_col = f"{campo}_manual"
+            if campo in merged.columns and manual_col in merged.columns:
+                # Mantiene el dato extraído si existe; solo rellena vacíos
+                merged[campo] = merged[campo].combine_first(merged[manual_col])
+
+        cols_finales = [c for c in merged.columns if not c.endswith("_manual")]
+        return merged[cols_finales]
+
+    # ---------------------------------------------------------
     # Utilidades visuales
     # ---------------------------------------------------------
     @staticmethod
@@ -200,12 +238,11 @@ class DashboardSection:
         st.markdown(
             f"""
             <div style="
-                background: linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.08) 100%);
-                border: 1px solid rgba(255,255,255,0.18);
+                background: white;
+                border: 1px solid rgba(0,0,0,0.08);
                 border-radius: 18px;
                 padding: 18px 22px;
-                backdrop-filter: blur(8px);
-                box-shadow: 0 8px 24px rgba(0,0,0,0.10);
+                box-shadow: 0 8px 24px rgba(0,0,0,0.08);
                 min-height: 118px;
             ">
                 <div style="
@@ -219,7 +256,7 @@ class DashboardSection:
                 <div style="
                     font-size: 30px;
                     font-weight: 800;
-                    color: #FFF7F3;
+                    color: #2E2E2E;
                     line-height: 1.1;
                 ">
                     {value}
@@ -243,11 +280,11 @@ class DashboardSection:
                 text=title,
                 x=0.02,
                 xanchor="left",
-                font=dict(size=18, color="#FFF7F3", family="Arial Black")
+                font=dict(size=18, color="#2E2E2E", family="Arial Black")
             ),
-            paper_bgcolor="rgba(15,16,25,0.92)",
-            plot_bgcolor="rgba(15,16,25,0.92)",
-            font=dict(color="#F8EDE8", size=13),
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(color="#2E2E2E", size=13),
             margin=dict(l=20, r=20, t=60, b=30),
             legend=dict(
                 orientation="h",
@@ -261,17 +298,17 @@ class DashboardSection:
 
         fig.update_xaxes(
             showgrid=True,
-            gridcolor="rgba(255,255,255,0.08)",
+            gridcolor="rgba(0,0,0,0.08)",
             zeroline=False,
             showline=False,
-            tickfont=dict(color="#F6E9E2")
+            tickfont=dict(color="#2E2E2E")
         )
         fig.update_yaxes(
             showgrid=True,
-            gridcolor="rgba(255,255,255,0.08)",
+            gridcolor="rgba(0,0,0,0.08)",
             zeroline=False,
             showline=False,
-            tickfont=dict(color="#F6E9E2")
+            tickfont=dict(color="#2E2E2E")
         )
 
         return fig
@@ -292,6 +329,7 @@ class DashboardSection:
 
         try:
             df = self._build_dashboard_dataframe()
+            df = self._apply_manual_overrides(df)
         except Exception as e:
             st.error(f"No se pudo construir el dashboard: {e}")
             return
@@ -397,7 +435,7 @@ class DashboardSection:
             fig_hist.update_yaxes(title="Número de contratos")
 
             fig_hist = self._apply_plot_style(fig_hist, "Distribución de rentas")
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width="stretch")
 
         with c2:
             if df_superficie.empty:
@@ -433,7 +471,7 @@ class DashboardSection:
                 )
 
                 fig_scatter = self._apply_plot_style(fig_scatter, "Relación renta vs superficie")
-                st.plotly_chart(fig_scatter, use_container_width=True)
+                st.plotly_chart(fig_scatter, width="stretch")
 
         st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
@@ -473,7 +511,7 @@ class DashboardSection:
 
             fig_renta_estado = self._apply_plot_style(fig_renta_estado, "Renta promedio por estado")
             fig_renta_estado.update_layout(height=520)
-            st.plotly_chart(fig_renta_estado, use_container_width=True)
+            st.plotly_chart(fig_renta_estado, width="stretch")
 
         precio_estado = (
             df_precio.groupby("estado", as_index=False)["precio_m2"]
@@ -512,7 +550,7 @@ class DashboardSection:
 
                 fig_precio_estado = self._apply_plot_style(fig_precio_estado, "Precio promedio por m² por estado")
                 fig_precio_estado.update_layout(height=520)
-                st.plotly_chart(fig_precio_estado, use_container_width=True)
+                st.plotly_chart(fig_precio_estado, width="stretch")
 
         st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
@@ -536,7 +574,7 @@ class DashboardSection:
             )
             fig_box.update_xaxes(title="Estado")
             fig_box = self._apply_plot_style(fig_box, "Dispersión de rentas por estado")
-            st.plotly_chart(fig_box, use_container_width=True)
+            st.plotly_chart(fig_box, width="stretch")
 
         st.markdown("### Resumen por estado")
 
@@ -558,7 +596,7 @@ class DashboardSection:
 
         st.dataframe(
             resumen,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -645,7 +683,7 @@ class DashboardSection:
             )
             fig_renta.update_yaxes(title="")
             fig_renta = self._apply_plot_style(fig_renta, "Renta mensual en el estado")
-            st.plotly_chart(fig_renta, use_container_width=True)
+            st.plotly_chart(fig_renta, width="stretch")
 
         with col2:
             if df_superficie.empty:
@@ -666,7 +704,7 @@ class DashboardSection:
                 fig_superficie.update_xaxes(title="Superficie (m²)")
                 fig_superficie.update_yaxes(title="")
                 fig_superficie = self._apply_plot_style(fig_superficie, "Tamaño de inmuebles")
-                st.plotly_chart(fig_superficie, use_container_width=True)
+                st.plotly_chart(fig_superficie, width="stretch")
 
         st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
@@ -695,7 +733,7 @@ class DashboardSection:
                 )
                 fig_precio.update_yaxes(title="")
                 fig_precio = self._apply_plot_style(fig_precio, "Precio por metro cuadrado")
-                st.plotly_chart(fig_precio, use_container_width=True)
+                st.plotly_chart(fig_precio, width="stretch")
 
         with col4:
             comparativa = pd.DataFrame({
@@ -724,7 +762,7 @@ class DashboardSection:
             fig_compare.update_yaxes(title="Valor")
             fig_compare.update_xaxes(title="")
             fig_compare = self._apply_plot_style(fig_compare, "Comparación contra promedio nacional")
-            st.plotly_chart(fig_compare, use_container_width=True)
+            st.plotly_chart(fig_compare, width="stretch")
 
     # ---------------------------------------------------------
     # SELECCIÓN
@@ -765,7 +803,7 @@ class DashboardSection:
             fig_renta.update_yaxes(title="Renta mensual", tickprefix="$", separatethousands=True)
             fig_renta.update_xaxes(title="Contrato")
             fig_renta = self._apply_plot_style(fig_renta, "Comparación de renta")
-            st.plotly_chart(fig_renta, use_container_width=True)
+            st.plotly_chart(fig_renta, width="stretch")
 
         with col2:
             df_superficie = df_sel.dropna(subset=["superficie_m2"]).copy()
@@ -783,7 +821,7 @@ class DashboardSection:
                 fig_superficie.update_yaxes(title="Superficie (m²)")
                 fig_superficie.update_xaxes(title="Contrato")
                 fig_superficie = self._apply_plot_style(fig_superficie, "Comparación de superficie")
-                st.plotly_chart(fig_superficie, use_container_width=True)
+                st.plotly_chart(fig_superficie, width="stretch")
 
         st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
@@ -805,7 +843,7 @@ class DashboardSection:
                 fig_precio.update_yaxes(title="Precio por m²", tickprefix="$", separatethousands=True)
                 fig_precio.update_xaxes(title="Contrato")
                 fig_precio = self._apply_plot_style(fig_precio, "Precio por metro cuadrado")
-                st.plotly_chart(fig_precio, use_container_width=True)
+                st.plotly_chart(fig_precio, width="stretch")
 
         with col4:
             df_costo = df_sel.dropna(subset=["costo_total"]).copy()
@@ -823,7 +861,7 @@ class DashboardSection:
                 fig_costo.update_yaxes(title="Costo total", tickprefix="$", separatethousands=True)
                 fig_costo.update_xaxes(title="Contrato")
                 fig_costo = self._apply_plot_style(fig_costo, "Costo total del contrato")
-                st.plotly_chart(fig_costo, use_container_width=True)
+                st.plotly_chart(fig_costo, width="stretch")
 
         st.markdown("### Tabla comparativa")
         tabla = df_sel[[
@@ -841,7 +879,7 @@ class DashboardSection:
             "fuente_superficie",
             "fuente_fechas",
         ]].copy()
-        st.dataframe(tabla, use_container_width=True, hide_index=True)
+        st.dataframe(tabla, width="stretch", hide_index=True)
 
     # ---------------------------------------------------------
     # VALIDACIÓN
@@ -894,7 +932,7 @@ class DashboardSection:
                 showlegend=False
             )
             fig_calidad = self._apply_plot_style(fig_calidad, "Calidad de extracción")
-            st.plotly_chart(fig_calidad, use_container_width=True)
+            st.plotly_chart(fig_calidad, width="stretch")
 
         with col2:
             campos = pd.DataFrame({
@@ -923,7 +961,7 @@ class DashboardSection:
                 yaxis_title=""
             )
             fig_campos = self._apply_plot_style(fig_campos, "Cobertura por campo")
-            st.plotly_chart(fig_campos, use_container_width=True)
+            st.plotly_chart(fig_campos, width="stretch")
 
         st.markdown("### Tabla de control de calidad")
 
@@ -949,7 +987,7 @@ class DashboardSection:
                 by=["campos_detectados", "porcentaje_completitud"],
                 ascending=[False, False]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -975,4 +1013,4 @@ class DashboardSection:
             ]
 
             disponibles = [c for c in columnas_flags if c in df.columns]
-            st.dataframe(df[disponibles], use_container_width=True, hide_index=True)
+            st.dataframe(df[disponibles], width="stretch", hide_index=True)
