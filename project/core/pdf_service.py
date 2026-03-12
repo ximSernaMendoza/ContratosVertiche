@@ -75,8 +75,8 @@ class PdfService:
             return ""
         text = text.replace("\u00a0", " ")
         text = text.replace("|", "I")
-        text = text.replace("ï¬", "fi")
-        text = text.replace("ï¬", "fl")
+        text = text.replace("ﬁ", "fi")
+        text = text.replace("ﬂ", "fl")
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{2,}", "\n", text)
         return text.strip()
@@ -96,7 +96,7 @@ class PdfService:
         img = ImageOps.autocontrast(img)
         img = img.filter(ImageFilter.SHARPEN)
 
-        # binarizaciÃ³n un poco mÃ¡s suave para no perder caracteres finos
+        # binarización un poco más suave para no perder caracteres finos
         img = img.point(lambda x: 255 if x > 165 else 0)
 
         # borde blanco para evitar recortes
@@ -130,7 +130,7 @@ class PdfService:
             if not candidates:
                 return ""
 
-            # elegir el texto mÃ¡s rico
+            # elegir el texto más rico
             best = max(candidates, key=len)
             return best
 
@@ -138,12 +138,12 @@ class PdfService:
             return ""
 
     # ---------------------------------------------------------
-    # HeurÃ­stica de velocidad / profundidad
+    # Heurística de velocidad / profundidad
     # ---------------------------------------------------------
     def _max_pages_for_dashboard(self, path: str, max_pages: int) -> int:
         base = os.path.basename(path).lower()
 
-        # contratos tipo T: normalmente los mÃ¡s escaneados/problemÃ¡ticos
+        # contratos tipo T: normalmente los más escaneados/problemáticos
         if base.startswith("t"):
             return min(max_pages, 5)
 
@@ -162,7 +162,7 @@ class PdfService:
         return base.startswith("t")
 
     # ---------------------------------------------------------
-    # ExtracciÃ³n por pÃ¡ginas
+    # Extracción por páginas
     # ---------------------------------------------------------
     def pdf_bytes_to_pages(self, pdf_bytes: bytes, path: str, max_pages: int) -> list[tuple[int, str]]:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -183,7 +183,7 @@ class PdfService:
             if force_ocr or self._is_sparse_text(text_normal):
                 ocr_text = self._ocr_page(page)
 
-                # nos quedamos con el mÃ¡s Ãºtil
+                # nos quedamos con el más útil
                 if len(ocr_text) > len(text_normal):
                     text_final = self.clean_text(ocr_text)
 
@@ -193,14 +193,14 @@ class PdfService:
         return pages
 
     # ---------------------------------------------------------
-    # ExtracciÃ³n completa
+    # Extracción completa
     # ---------------------------------------------------------
     def extract_full_pdf_text(self, path: str, max_pages: int = 5) -> str:
         try:
             pdf_bytes = self.storage.download(path)
             pages = self.pdf_bytes_to_pages(pdf_bytes, path=path, max_pages=max_pages)
             return "\n\n".join(
-                [f"[PÃ¡gina {page_num}]\n{text}" for page_num, text in pages if text]
+                [f"[Página {page_num}]\n{text}" for page_num, text in pages if text]
             )
         except Exception:
             return ""
