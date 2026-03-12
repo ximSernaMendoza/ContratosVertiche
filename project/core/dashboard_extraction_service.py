@@ -66,31 +66,31 @@ class DashboardExtractionService:
             "Campeche",
             "Chiapas",
             "Chihuahua",
-            "Ciudad de México",
+            "Ciudad de MÃ©xico",
             "Coahuila",
             "Colima",
             "Durango",
-            "Estado de México",
+            "Estado de MÃ©xico",
             "Guanajuato",
             "Guerrero",
             "Hidalgo",
             "Jalisco",
-            "Michoacán",
+            "MichoacÃ¡n",
             "Morelos",
             "Nayarit",
-            "Nuevo León",
+            "Nuevo LeÃ³n",
             "Oaxaca",
             "Puebla",
-            "Querétaro",
+            "QuerÃ©taro",
             "Quintana Roo",
-            "San Luis Potosí",
+            "San Luis PotosÃ­",
             "Sinaloa",
             "Sonora",
             "Tabasco",
             "Tamaulipas",
             "Tlaxcala",
             "Veracruz",
-            "Yucatán",
+            "YucatÃ¡n",
             "Zacatecas",
         ]
 
@@ -111,22 +111,22 @@ class DashboardExtractionService:
         }
 
         self.city_to_state = {
-            "merida": "Yucatán",
-            "monterrey": "Nuevo León",
+            "merida": "YucatÃ¡n",
+            "monterrey": "Nuevo LeÃ³n",
             "puebla": "Puebla",
-            "queretaro": "Querétaro",
-            "san juan del rio": "Querétaro",
+            "queretaro": "QuerÃ©taro",
+            "san juan del rio": "QuerÃ©taro",
             "guadalajara": "Jalisco",
             "leon": "Guanajuato",
             "cancun": "Quintana Roo",
-            "toluca": "Estado de México",
+            "toluca": "Estado de MÃ©xico",
             "gomez palacio": "Durango",
             "chihuahua": "Chihuahua",
             "colima": "Colima",
-            "huehuetoca": "Estado de México",
+            "huehuetoca": "Estado de MÃ©xico",
             "juarez": "Chihuahua",
-            "san luis potosi": "San Luis Potosí",
-            "slp": "San Luis Potosí",
+            "san luis potosi": "San Luis PotosÃ­",
+            "slp": "San Luis PotosÃ­",
             "vallarta": "Jalisco",
             "puerto vallarta": "Jalisco",
             "cachanilla": "Baja California",
@@ -134,7 +134,7 @@ class DashboardExtractionService:
         }
 
     # ---------------------------------------------------------
-    # Normalización
+    # NormalizaciÃ³n
     # ---------------------------------------------------------
     @staticmethod
     def strip_accents(value: str) -> str:
@@ -155,7 +155,7 @@ class DashboardExtractionService:
         # Arregla texto roto tipo "R e n t a"
         text = re.sub(r"(?<=\b[A-Za-z])\s(?=[A-Za-z]\b)", "", text)
 
-        text = text.replace("ﬁ", "fi").replace("ﬂ", "fl")
+        text = text.replace("ï¬", "fi").replace("ï¬", "fl")
         text = text.replace("|", "I")
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n+", "\n", text)
@@ -299,7 +299,7 @@ class DashboardExtractionService:
 
                 raw = m.group(1).replace(",", "").strip()
 
-                # Evita años como 2025
+                # Evita aÃ±os como 2025
                 if re.fullmatch(r"20\d{2}", raw):
                     continue
 
@@ -321,7 +321,7 @@ class DashboardExtractionService:
         valor_norm = self.strip_accents(valor).lower().strip()
 
         if valor_norm in {"estado de mexico", "edo de mexico", "edomex"}:
-            return "Estado de México"
+            return "Estado de MÃ©xico"
 
         if valor_norm == "mexico":
             return None
@@ -334,7 +334,7 @@ class DashboardExtractionService:
         for e in self.estados:
             e_norm = self.strip_accents(e).lower()
             if e_norm in valor_norm or valor_norm in e_norm:
-                if e == "Estado de México" and valor_norm == "mexico":
+                if e == "Estado de MÃ©xico" and valor_norm == "mexico":
                     continue
                 return e
 
@@ -349,13 +349,13 @@ class DashboardExtractionService:
     @staticmethod
     def _title_city(ciudad_norm: str) -> str:
         especiales = {
-            "san juan del rio": "San Juan del Río",
-            "gomez palacio": "Gómez Palacio",
-            "san luis potosi": "San Luis Potosí",
-            "ciudad de mexico": "Ciudad de México",
-            "queretaro": "Querétaro",
-            "merida": "Mérida",
-            "cancun": "Cancún",
+            "san juan del rio": "San Juan del RÃ­o",
+            "gomez palacio": "GÃ³mez Palacio",
+            "san luis potosi": "San Luis PotosÃ­",
+            "ciudad de mexico": "Ciudad de MÃ©xico",
+            "queretaro": "QuerÃ©taro",
+            "merida": "MÃ©rida",
+            "cancun": "CancÃºn",
             "vallarta": "Puerto Vallarta",
         }
         return especiales.get(ciudad_norm, ciudad_norm.title())
@@ -365,7 +365,7 @@ class DashboardExtractionService:
     ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         filename = self.normalize_filename(path)
 
-        # En T... el nombre del archivo suele ser más confiable
+        # En T... el nombre del archivo suele ser mÃ¡s confiable
         if filename.startswith("t"):
             for ciudad_norm, estado in self.city_to_state.items():
                 if ciudad_norm in filename:
@@ -392,7 +392,7 @@ class DashboardExtractionService:
 
         text_low = self.strip_accents(text.lower())
         for estado in self.estados:
-            if estado == "Estado de México":
+            if estado == "Estado de MÃ©xico":
                 patron_estado = r"\bestado de mexico\b|\bedo\.?\s+de\s+mexico\b"
             else:
                 estado_norm = self.strip_accents(estado.lower())
@@ -412,7 +412,7 @@ class DashboardExtractionService:
         patrones_texto = [
             r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\s+al\s+(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})",
             r"del\s+(\d{1,2})\s+de\s+([A-Za-z]+)\s+de\s+(\d{4})\s+al\s+(\d{1,2})\s+de\s+([A-Za-z]+)\s+de\s+(\d{4})",
-            r"(\d{2})\.(\d{2})\.(\d{4})\s*[-–]\s*(\d{2})\.(\d{2})\.(\d{4})",
+            r"(\d{2})\.(\d{2})\.(\d{4})\s*[-â]\s*(\d{2})\.(\d{2})\.(\d{4})",
             r"(\d{2})/(\d{2})/(\d{4})\s+al\s+(\d{2})/(\d{2})/(\d{4})",
         ]
 
@@ -439,7 +439,7 @@ class DashboardExtractionService:
                     "texto",
                 )
 
-        # Vigencia en años + fecha final
+        # Vigencia en aÃ±os + fecha final
         m_years = re.search(
             r"(?:plazo inicial de|vigencia de|duracion de|plazo de)\s*(\d+)\s*anos",
             text,
@@ -470,7 +470,7 @@ class DashboardExtractionService:
             )
 
         # 01.06.2024-30.06.2029
-        m = re.search(r"(\d{2})\.(\d{2})\.(\d{4})[-–](\d{2})\.(\d{2})\.(\d{4})", filename)
+        m = re.search(r"(\d{2})\.(\d{2})\.(\d{4})[-â](\d{2})\.(\d{2})\.(\d{4})", filename)
         if m:
             d1, m1, y1, d2, m2, y2 = m.groups()
             return (
@@ -527,7 +527,7 @@ class DashboardExtractionService:
         return None, None
 
     # ---------------------------------------------------------
-    # Depósito
+    # DepÃ³sito
     # ---------------------------------------------------------
     def extract_deposito(self, text: str, renta_mensual: Optional[float]) -> tuple[Optional[float], Optional[str]]:
         patrones_monto = [
@@ -590,14 +590,14 @@ class DashboardExtractionService:
     # ---------------------------------------------------------
     def extract_superficie(self, text: str) -> tuple[Optional[float], Optional[str]]:
         patrones = [
-            r"superficie rentable total aproximada de\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
-            r"superficie total aproximada de\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
-            r"superficie aproximada de\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
-            r"superficie(?: aproximada)?\s*(?:de)?\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
-            r"area comercial(?: de)?\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
-            r"area rentable(?: total)?(?: de)?\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
-            r"area(?: rentable| total| comercial)?\s*(?:de)?\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
-            r"superficie:\s*(\d+(?:\.\d+)?)\s*(?:m²|m2|metros cuadrados)",
+            r"superficie rentable total aproximada de\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
+            r"superficie total aproximada de\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
+            r"superficie aproximada de\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
+            r"superficie(?: aproximada)?\s*(?:de)?\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
+            r"area comercial(?: de)?\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
+            r"area rentable(?: total)?(?: de)?\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
+            r"area(?: rentable| total| comercial)?\s*(?:de)?\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
+            r"superficie:\s*(\d+(?:\.\d+)?)\s*(?:mÂ²|m2|metros cuadrados)",
         ]
 
         for patron in patrones:
@@ -611,8 +611,8 @@ class DashboardExtractionService:
                     pass
 
         patrones_contexto = [
-            r"(superficie|area|area comercial|area rentable|metros cuadrados)(?:.|\n){0,180}?(\d+(?:\.\d+)?)\s*(m²|m2|metros cuadrados)",
-            r"(\d+(?:\.\d+)?)\s*(m²|m2|metros cuadrados)(?:.|\n){0,120}?(superficie|area|local|inmueble|rentable)",
+            r"(superficie|area|area comercial|area rentable|metros cuadrados)(?:.|\n){0,180}?(\d+(?:\.\d+)?)\s*(mÂ²|m2|metros cuadrados)",
+            r"(\d+(?:\.\d+)?)\s*(mÂ²|m2|metros cuadrados)(?:.|\n){0,120}?(superficie|area|local|inmueble|rentable)",
         ]
 
         for patron in patrones_contexto:
@@ -628,7 +628,7 @@ class DashboardExtractionService:
                     pass
 
         candidatos = []
-        for m in re.finditer(r"(\d+(?:\.\d+)?)\s*(m²|m2|metros cuadrados)", text, re.IGNORECASE):
+        for m in re.finditer(r"(\d+(?:\.\d+)?)\s*(mÂ²|m2|metros cuadrados)", text, re.IGNORECASE):
             try:
                 val = float(m.group(1))
                 if 20 <= val <= 100000:
@@ -671,7 +671,7 @@ class DashboardExtractionService:
         return encontrados, porcentaje
 
     # ---------------------------------------------------------
-    # Extracción completa
+    # ExtracciÃ³n completa
     # ---------------------------------------------------------
     def extract_contract_record(self, path: str) -> DashboardContractRecord:
         text, texto_extraido_ok, posible_pdf_escaneado, longitud_texto = self._extract_text(path)
@@ -683,7 +683,7 @@ class DashboardExtractionService:
         meses_vigencia = self._calculate_months(fecha_inicio, fecha_fin)
         deposito, fuente_deposito = self.extract_deposito(text, renta_mensual)
 
-        # Inferencia extra: si no hay renta pero sí depósito y el texto sugiere 2 meses
+        # Inferencia extra: si no hay renta pero sÃ­ depÃ³sito y el texto sugiere 2 meses
         if renta_mensual is None and deposito is not None:
             if re.search(r"dos mensualidades|equivalente a dos meses|2 meses de renta", text, re.IGNORECASE):
                 renta_mensual = deposito / 2

@@ -170,7 +170,11 @@ class DashboardSection:
             "tiene_vigencia",
             "campos_detectados",
             "porcentaje_completitud",
-            "calidad_extraccion",
+            "confianza_dashboard",
+            "fuente_renta",
+            "fuente_deposito",
+            "fuente_superficie",
+            "fuente_fechas",
         ]
 
         try:
@@ -938,7 +942,11 @@ class DashboardSection:
             "meses_vigencia",
             "campos_detectados",
             "porcentaje_completitud",
-            "calidad_extraccion",
+            "confianza_dashboard",
+            "fuente_renta",
+            "fuente_deposito",
+            "fuente_superficie",
+            "fuente_fechas",
         ]
 
         disponibles = [c for c in columnas_tabla if c in df.columns]
