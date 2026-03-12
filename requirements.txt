@@ -1,4 +1,4 @@
-plotly>=5.0
+plotly>=5.20
 PyMuPDF>=1.23.0
 supabase
 openai>=1.0.0
