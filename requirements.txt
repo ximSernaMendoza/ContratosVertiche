@@ -4,7 +4,7 @@ supabase
 openai>=1.0.0
 streamlit>=1.32
 python-dotenv>=1.0
-streamlit-calendar==1.2.1
+streamlit-calendar==1.4.0
 
 # LangChain / LangGraph
 langchain>=0.2.11
