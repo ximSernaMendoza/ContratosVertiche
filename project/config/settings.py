@@ -16,7 +16,7 @@ class AppConfig:
     initial_sidebar_state: str = "expanded"
 
     # Configuración de Supabase
-    SUPABASE_URL: str = os.getenv("SUPABASE_URL ")
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY")
     BUCKET_NAME: str = "contratos"
 
