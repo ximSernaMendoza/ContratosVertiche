@@ -68,7 +68,7 @@ class RagService:
             except Exception:
                 continue
 
-            pages = _self.pdf_service.pdf_bytes_to_pages(pdf_bytes, max_pages)
+            pages = _self.pdf_service.pdf_bytes_to_pages(pdf_bytes,path, max_pages)
 
             for page_num, page_text in pages:
                 for ci, chunk in enumerate(
