@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import streamlit as st
 from config.settings import SETTINGS
-from agents.router import run_orchestrator, list_agents
 
 
 class ConsultaSection:
@@ -18,6 +17,8 @@ class ConsultaSection:
         self.components = components
 
     def render(self) -> None:
+        from agents.router import run_orchestrator, list_agents
+
         self.session.normalize_messages()
         self.components.render_chat_messages(self.session.messages, self.finance_service)
         agents = list_agents()
