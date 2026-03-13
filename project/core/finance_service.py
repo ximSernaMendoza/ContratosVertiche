@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 from typing import Dict, Any, List, Optional
 from agents.finance_agent import extract_finance_numbers
-
+from dataclasses import dataclass
 
 class FinanceService:
     def build_chart_data(self, context: str):
@@ -94,6 +94,7 @@ class FinanceService:
                 hide_index=True,
             )
 
+@dataclass
 class FinanceInputs:
     years: int = 5
     monthly_sales: Optional[float] = None  # retail scenario
