@@ -6,6 +6,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
+@dataclass
 class AppConfig:
     # Configuración general de la aplicación
     page_title: str = "Asistente Virtual 2.0 | Vertiche"
