@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from git import Optional
 import pandas as pd
