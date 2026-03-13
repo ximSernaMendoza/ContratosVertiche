@@ -18,6 +18,15 @@ class PdfService:
         self._ocr_ready = False
         self._init_ocr()
 
+        self.estados_mexico = [
+            "aguascalientes", "baja california", "baja california sur", "campeche",
+            "chiapas", "chihuahua", "ciudad de mexico", "coahuila", "colima",
+            "durango", "guanajuato", "guerrero", "hidalgo", "jalisco", "mexico",
+            "michoacan", "morelos", "nayarit", "nuevo leon", "oaxaca", "puebla",
+            "queretaro", "quintana roo", "san luis potosi", "sinaloa", "sonora",
+            "tabasco", "tamaulipas", "tlaxcala", "veracruz", "yucatan", "zacatecas"
+        ]
+
     # ---------------------------------------------------------
     # OCR setup
     # ---------------------------------------------------------
@@ -41,6 +50,97 @@ class PdfService:
 
         except Exception:
             self._ocr_ready = False
+    
+    @staticmethod
+    def normalize_name(value: str) -> str:
+        value = (value or "").lower().strip()
+        value = value.replace("á", "a").replace("é", "e").replace("í", "i")
+        value = value.replace("ó", "o").replace("ú", "u").replace("ñ", "n")
+        return value
+    
+    @staticmethod
+    def unique_preserve_order(items: list[Optional[str]]) -> list[str]:
+        seen = set()
+        result: list[str] = []
+        for item in items:
+            if not item:
+                continue
+            if item not in seen:
+                seen.add(item)
+                result.append(item)
+        return result
+
+    def _is_state_code_pdf(self, path: str) -> bool:
+        base = self.normalize_name(os.path.basename(path))
+        no_ext = base.replace(".pdf", "")
+
+        if no_ext in self.estados_mexico:
+            return True
+
+        full = self.normalize_name(path)
+        for estado in self.estados_mexico:
+            if full.endswith(f"/{estado}.pdf"):
+                return True
+
+        return False
+
+    def _is_federal_code_pdf(self, path: str) -> bool:
+        full = self.normalize_name(path)
+        patrones = [
+            "codigo civil federal",
+            "codigo_civil_federal",
+            "codigocivilfederal",
+            "federal.pdf",
+        ]
+        return any(p in full for p in patrones)
+
+    def find_codigo_civil_federal(self, pdf_paths: list[str]) -> Optional[str]:
+        if not pdf_paths:
+            return None
+
+        # Primero intenta coincidencias más específicas
+        scored: list[tuple[int, str]] = []
+        for path in pdf_paths:
+            norm = self.normalize_name(path)
+            score = 0
+            if "codigo civil federal" in norm or "codigo_civil_federal" in norm:
+                score += 100
+            if os.path.basename(norm) == "federal.pdf":
+                score += 80
+            if "federal" in norm:
+                score += 20
+            if "codigo" in norm and "civil" in norm:
+                score += 20
+            if score > 0:
+                scored.append((score, path))
+
+        if scored:
+            scored.sort(key=lambda x: (-x[0], x[1]))
+            return scored[0][1]
+
+        # Fallback: usa la heurística general
+        for path in pdf_paths:
+            if self._is_federal_code_pdf(path):
+                return path
+
+        return None
+
+    def find_codigos_civiles_estatales(self, pdf_paths: list[str]) -> list[str]:
+        if not pdf_paths:
+            return []
+
+        result = []
+        for path in pdf_paths:
+            norm = self.normalize_name(path)
+            if self._is_federal_code_pdf(path):
+                continue
+            if self._is_state_code_pdf(path):
+                result.append(path)
+                continue
+            if "codigo civil" in norm or "codigo_civil" in norm or "código civil" in path.lower():
+                result.append(path)
+
+        return sorted(set(result))
 
     # ---------------------------------------------------------
     # Utilidades de texto
