@@ -1,4 +1,3 @@
-from __future__ import annotations
 import streamlit as st
 from agents.legal import run_legal_agent
 from core.pdf_service import PdfService
