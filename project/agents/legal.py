@@ -1,9 +1,9 @@
 from openai import OpenAI
 
-LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
-CHAT_MODEL = "meta-llama-3.1-8b-instruct"
+from config.settings import SETTINGS
 
-client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
+
+client = SETTINGS.get_openai_client()
 
 LEGAL_SYSTEM_PROMPT = """
 Eres un abogado experto en contratos de arrendamiento comercial en México.
@@ -138,7 +138,7 @@ IMPORTANTE:
 
     try:
         resp = client.chat.completions.create(
-            model=CHAT_MODEL,
+            model=SETTINGS.CHAT_MODEL,
             messages=[
                 {"role": "system", "content": LEGAL_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},

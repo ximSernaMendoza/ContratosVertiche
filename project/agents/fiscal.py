@@ -233,7 +233,7 @@ PREGUNTA DEL USUARIO:
 """
 
         resp = client.chat.completions.create(
-            model=CHAT_MODEL,
+            model=SETTINGS.CHAT_MODEL,
             messages=[
                 {"role": "system", "content": FISCAL_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},

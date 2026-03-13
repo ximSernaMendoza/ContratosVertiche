@@ -1,11 +1,10 @@
 import json
 import re
 from openai import OpenAI
+from config.settings import SETTINGS
 
-LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
-CHAT_MODEL = "meta-llama-3.1-8b-instruct"
+client = SETTINGS.get_openai_client()
 
-client = OpenAI(base_url=LMSTUDIO_BASE, api_key="lm-studio")
 
 EXTRACTION_PROMPT = """Extrae los datos financieros del contrato de arrendamiento del CONTEXTO.
 Responde ÚNICAMENTE con JSON válido, sin texto adicional ni markdown.
@@ -27,7 +26,7 @@ def extract_finance_numbers(context: str) -> dict:
     """Extrae campos financieros clave del contexto RAG como JSON estructurado."""
     context = context[:MAX_CONTEXT_CHARS]
     resp = client.chat.completions.create(
-        model=CHAT_MODEL,
+        model=SETTINGS.CHAT_MODEL,
         messages=[
             {"role": "system", "content": EXTRACTION_PROMPT},
             {"role": "user", "content": f"CONTEXTO:\n{context}"},
@@ -106,7 +105,7 @@ Tarea:
 - No inventes. Si falta info: "No se especifica en el contexto".
 """
     resp = client.chat.completions.create(
-        model=CHAT_MODEL,
+        model=SETTINGS.CHAT_MODEL,
         messages=[
             {"role": "system", "content": FINANCE_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
